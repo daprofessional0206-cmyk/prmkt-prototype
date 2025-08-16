@@ -3,6 +3,19 @@ import streamlit as st
 from datetime import datetime
 
 st.set_page_config(page_title="PR & Marketing AI Prototype", page_icon="🧠", layout="wide")
+import streamlit as st
+
+# Thin separator between major sections
+def divider():
+    st.markdown("<hr style='border: 1px solid #202431; margin: 1.25rem 0;'/>", unsafe_allow_html=True)
+
+# Slightly reduce global top padding
+st.markdown("""
+    <style>
+      .block-container { padding-top: 1.2rem; padding-bottom: 3rem; }
+    </style>
+""", unsafe_allow_html=True)
+
 
 # ---------- helpers ----------
 def ss_get(name, default):
@@ -147,6 +160,7 @@ if st.button("Generate Content", use_container_width=True):
             file_name=f"{content_type.lower().replace(' ','_')}.txt",
             mime="text/plain",
         )
+
 
 # Lightweight lint (kept from your earlier version)
 problems = []
