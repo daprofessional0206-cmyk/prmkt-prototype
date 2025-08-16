@@ -5,6 +5,32 @@ import json
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from typing import List, Optional 
+import streamlit as st          # <-- ADD/KEEP THIS
+from pathlib import Path        # dataset utils use this
+import pandas as pd             # dataset utils use this
+# ---- Dataset utils (Step 2) ----
+
+DATA_DIR = Path(__file__).parent / "data"
+SAMPLE_CSV = DATA_DIR / "sample_dataset.csv"
+
+@st.cache_data(show_spinner=False)
+def load_csv(path: Path, nrows: int | None = None) -> pd.DataFrame:
+    df = pd.read_csv(path)
+    if nrows:
+        df = df.head(nrows)
+    return df
+
+def ensure_sample_dataset() -> None:
+    """Create a tiny sample CSV if it doesn't exist, so preview always works."""
+    DATA_DIR.mkdir(exist_ok=True)
+    if not SAMPLE_CSV.exists():
+        SAMPLE_CSV.write_text(
+            "date,channel,post_type,headline,copy,clicks,impressions,engagement_rate\n"
+            "2025-08-01,LinkedIn,post,Acme RoboHub 2.0 Launch,Fast setup & SOC2 Type II,124,5400,0.036\n"
+            "2025-08-03,Email,newsletter,Why customers switch to Acme,Save 30% with RoboHub 2.0,278,8000,0.051\n"
+            "2025-08-05,Instagram,reel,Behind-the-scenes of RoboHub,2× faster workflow demo,410,13200,0.062\n"
+        )
+
 # --- Guardrails & throttling ---
 import time
 
@@ -264,21 +290,29 @@ Constraints:
 # ============ Sidebar Status ============
 
 with st.sidebar:
-    st.subheader("🔧 App Status")
+    # --- Dataset preview (Phase 2 – Step 4) ---
+    try:
+        df_preview = load_csv(
+            Path(SAMPLE_CSV),
+            nrows=st.number_input("Preview rows", min_value=1, max_value=50, value=5, step=1, key="sb_preview_rows")
+        )
+        st.caption(f"Dataset: {Path(SAMPLE_CSV).name}")
+        st.dataframe(df_preview, use_container_width=True, height=220)
+# --- App Status ---
+        st.subheader("⚙️ App Status")
+    except Exception as e:
+        st.warning(f"Could not load dataset preview: {e}")
+         
     if OPENAI_OK:
         st.success("OpenAI: Connected")
     else:
         st.info("OpenAI: Not configured (offline templates)")
 
-    st.caption("Tip: Add an API key in `.streamlit/secrets.toml` to enable higher-quality AI outputs.")
-    divider()
-    st.markdown("**Version**: v1.0 (Phase 1)")
-    st.caption("Light theme polish, stable widget keys, offline/online modes, and downloads.")
-
-
 # ============ Header ============
 
 st.title("💡 PR & Marketing AI Platform — v1 Prototype")
+# make sure the sample dataset exists for preview
+ensure_sample_dataset()
 st.caption("A focused prototype for strategy ideas and content drafts (press releases, ads, posts, emails, etc.)")
 
 divider()
@@ -449,6 +483,6 @@ with st.expander("🕘 History (last 15)"):
                 st.code(json.dumps(item["input"], indent=2))
                 st.markdown(item["output"])
             divider()
-# write a function to format text into bullet points
+
 
 
