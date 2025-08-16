@@ -298,11 +298,12 @@ with st.sidebar:
         )
         st.caption(f"Dataset: {Path(SAMPLE_CSV).name}")
         st.dataframe(df_preview, use_container_width=True, height=220)
-# --- App Status ---
-        st.subheader("⚙️ App Status")
+
+        
     except Exception as e:
         st.warning(f"Could not load dataset preview: {e}")
-         
+    # --- App Status ---
+        st.subheader("⚙️ App Status")
     if OPENAI_OK:
         st.success("OpenAI: Connected")
     else:
