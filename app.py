@@ -449,3 +449,6 @@ with st.expander("🕘 History (last 15)"):
                 st.code(json.dumps(item["input"], indent=2))
                 st.markdown(item["output"])
             divider()
+# write a function to format text into bullet points
+
+
