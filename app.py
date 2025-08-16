@@ -221,3 +221,154 @@ with st.container(border=True):
 
 st.markdown("---")
 st.caption("Next: save to JSON, live news hooks, multi-language, and optional LLM APIs.")
+# ==============================
+# Content Engine — AI Copy Generator (offline, +language +download)
+# ==============================
+import io
+
+st.subheader("3️⃣  Content Engine — AI Copy Generator (offline)")
+st.caption("Now supports language output and download.")
+
+col1, col2, col3 = st.columns(3)
+with col1:
+    content_type = st.selectbox("Content Type", [
+        "Press Release", "Ad Copy", "LinkedIn Post", "Tweet/X Post", "Blog Intro"
+    ])
+with col2:
+    tone = st.selectbox("Tone", ["Neutral", "Friendly", "Professional", "Bold"])
+with col3:
+    length = st.selectbox("Length", ["Short", "Medium", "Long"])
+
+colp1, colp2, colp3 = st.columns(3)
+with colp1:
+    platform = st.selectbox("Platform (for Social/Ad)", ["Generic", "LinkedIn", "X/Twitter", "Instagram", "YouTube"])
+with colp2:
+    audience = st.selectbox("Audience (who is this for?)", ["Decision-makers", "Buyers", "Developers", "General"])
+with colp3:
+    cta_choice = st.selectbox("Call to Action", ["Book a demo", "Learn more", "Sign up", "Contact us"])
+
+# NEW: language output
+language = st.selectbox("Language", ["English", "Hindi", "Gujarati"])
+
+topic = st.text_input("Topic / Product / Offer", placeholder="Launch of Acme RoboHub 2.0")
+bullets = st.text_area("Key Points (bullets, one per line)",
+                       placeholder="• 2x faster setup\n• SOC 2 Type II\n• Saves 30% cost")
+
+def translate_text(lang: str, text: str) -> str:
+    """
+    Quick, rule-based translation-ish mapping for demo.
+    (Not accurate translation — just enough to prove the UI/flow.
+    We’ll replace with a real LLM later.)
+    """
+    if lang == "English":
+        return text
+    # very simple word swaps to demonstrate multi-language output
+    mapping_hi = {
+        "Press Release": "प्रेस विज्ञप्ति",
+        "Book a demo": "डेमो बुक करें",
+        "Learn more": "और जानें",
+        "Sign up": "साइन अप करें",
+        "Contact us": "हमसे संपर्क करें",
+        "Key Points": "मुख्य बिंदु"
+    }
+    mapping_gu = {
+        "Press Release": "પ્રેસ રિલીઝ",
+        "Book a demo": "ડેમો બુક કરો",
+        "Learn more": "વધુ જાણો",
+        "Sign up": "સાઇન અપ કરો",
+        "Contact us": "અમારો સંપર્ક કરો",
+        "Key Points": "મુખ્ય મુદ્દા"
+    }
+    mp = mapping_hi if lang == "Hindi" else mapping_gu
+    for k, v in mp.items():
+        text = text.replace(k, v)
+    return text
+
+def make_draft():
+    # Build a simple, offline draft
+    lines = []
+    title_map = {
+        "Press Release": "Press Release",
+        "Ad Copy": "Ad Copy",
+        "LinkedIn Post": "LinkedIn Post",
+        "Tweet/X Post": "Tweet/X Post",
+        "Blog Intro": "Blog Intro"
+    }
+    title = f"{title_map.get(content_type, content_type)} — {topic}".strip(" —")
+    lines.append(title)
+    lines.append("=" * len(title))
+    lines.append("")
+    lines.append(f"Tone: {tone} | Length: {length} | Audience: {audience} | CTA: {cta_choice}")
+    lines.append(f"Platform: {platform}")
+    lines.append("")
+
+    if bullets.strip():
+        lines.append("Key Points:")
+        # normalize bullet list
+        pts = [b.strip("•- ").strip() for b in bullets.splitlines() if b.strip()]
+        for p in pts:
+            lines.append(f"• {p}")
+        lines.append("")
+
+    # pretend generated body (rule-based skeleton)
+    body = []
+    if content_type == "Press Release":
+        body.append(f"{topic} — announced today, designed for {audience.lower()}.")
+        body.append("It improves speed, reliability, and cost for modern teams.")
+        body.append("For details and a walkthrough, see the link below.")
+    elif content_type == "Ad Copy":
+        body.append(f"Introducing {topic}. Faster. Smarter. Better.")
+        body.append("Get the edge you need — without the complexity.")
+    elif content_type == "LinkedIn Post":
+        body.append(f"We’re excited to share {topic}! 🚀")
+        body.append("Built for real-world teams who value impact over noise.")
+    elif content_type == "Tweet/X Post":
+        body.append(f"{topic}: speed, trust, and savings — in one place. #New")
+    else:
+        body.append(f"{topic} sets a new baseline for performance and simplicity.")
+        body.append("Here’s why it matters and how you can get started…")
+
+    lines.extend(body)
+    lines.append("")
+    lines.append(f"➡ {cta_choice}")
+    draft = "\n".join(lines)
+
+    # apply the quick language mapping
+    return translate_text(language, draft)
+
+if st.button("Generate Content"):
+    draft_text = make_draft()
+    st.text_area("Generated Content", draft_text, height=300)
+
+    # NEW: Download options
+    col_dl1, col_dl2 = st.columns(2)
+    with col_dl1:
+        st.download_button(
+            "Download .txt",
+            data=draft_text.encode("utf-8"),
+            file_name="ai_copy.txt",
+            mime="text/plain"
+        )
+    with col_dl2:
+        md = f"```text\n{draft_text}\n```"
+        st.download_button(
+            "Download .md",
+            data=md.encode("utf-8"),
+            file_name="ai_copy.md",
+            mime="text/markdown"
+        )
+
+# lightweight checks (kept from earlier logic, optional)
+problems = []
+if not topic:
+    problems.append("Topic missing — add a topic/product name.")
+if content_type == "Press Release" and "Press Release" not in topic:
+    # just a gentle nudge for demo
+    pass
+
+if problems:
+    st.warning("Fix these:")
+    for p in problems:
+        st.write("• " + p)
+else:
+    st.success("Looks good for a first draft.")
