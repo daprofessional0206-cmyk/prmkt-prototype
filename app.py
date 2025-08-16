@@ -4,14 +4,50 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import List, Optional 
+# --- Guardrails & throttling ---
+import time
+
+def require_secrets_if_online(online_flag: bool):
+    """
+    If you are trying to use online LLM mode (OpenAI), ensure a key exists.
+    """
+    if online_flag:
+        if "OPENAI_API_KEY" not in st.secrets or not st.secrets["OPENAI_API_KEY"]:
+            st.error("🔐 Missing OpenAI API key. Add it in Streamlit Cloud → App settings → Secrets.")
+            st.stop()
+
+def require_inputs(company: str, topic: str, bullets: list[str]):
+    problems = []
+    if not company.strip():
+        problems.append("Company name is required.")
+    if not topic.strip():
+        problems.append("Topic / Product / Offer is required.")
+    if len(bullets) == 0:
+        problems.append("Add at least one key point (1 per line).")
+    if any(len(b) > 220 for b in bullets):
+        problems.append("Each bullet should be ≤ 220 characters.")
+
+    if problems:
+        banner_warn("Please fix these:", problems)
+        st.stop()
+
+
+def throttle(seconds: int = 8):
+    """
+    Prevent accidental double-clicks on Generate.
+    """
+    now = time.time()
+    last = st.session_state.get("last_gen", 0)
+    if now - last < seconds:
+        wait = int(seconds - (now - last))
+        st.info(f"⏳ Please wait {wait}s before generating again.")
+        st.stop()
+    st.session_state["last_gen"] = now
 
 import streamlit as st # --- App Config (branding & theme) ---
-st.set_page_config(
-    page_title="PR & Marketing Prototype",
-    page_icon="📢",
-    layout="centered"
-)
+
+
 
 st.title("📢 PR & Marketing AI Prototype")
 st.caption("Phase 1 Demo – Generate PR copy, marketing content, and track history")
@@ -32,11 +68,13 @@ if "OPENAI_API_KEY" in st.secrets and st.secrets["OPENAI_API_KEY"]:
 
 
 # ============ Page & simple CSS polish ============
+# --- App Config (branding & theme) ---
 st.set_page_config(
-    page_title="PR & Marketing AI Prototype",
-    page_icon="💡",
-    layout="wide",
+    page_title="PR & Marketing Prototype",
+    page_icon="📢",
+    layout="centered"
 )
+
 
 # Small layout pad tweak
 st.markdown(
@@ -65,6 +103,24 @@ def bulletize(text: str) -> List[str]:
     """Split textarea lines into bullets (drop empties, trim, max 15)."""
     lines = [ln.strip("•- \t") for ln in text.splitlines() if ln.strip()]
     return lines[:15]
+
+# --- Styled banners (lightweight wrappers) ---
+def banner_success(title: str, body: str | None = None):
+    st.success(f"✅ {title}")
+    if body:
+        st.caption(body)
+
+def banner_info(title: str, body: str | None = None):
+    st.info(f"ℹ️ {title}")
+    if body:
+        st.caption(body)
+
+def banner_warn(title: str, items: list[str] | None = None):
+    if not items:
+        st.warning(f"⚠️ {title}")
+        return
+    bullets = "\n".join([f"• {i}" for i in items])
+    st.warning(f"⚠️ {title}\n\n{bullets}")
 
 
 @dataclass
@@ -337,10 +393,12 @@ if issues:
             st.write("•", i)
 
 if st.button("Generate Content", key="btn_generate", use_container_width=True):
-    if not brief.topic.strip():
-        st.warning("Please enter a topic / offer first.")
-    else:
-        try:
+    # ✅ Run guardrails before generating
+    throttle(8)  
+    require_inputs(company.name, brief.topic, brief.bullets)
+    require_secrets_if_online(OPENAI_OK)
+
+    try:
             if OPENAI_OK:
                 prompt = make_prompt(brief, company)
                 draft = llm_copy(prompt, temperature=0.65, max_tokens=900)
@@ -351,7 +409,7 @@ if st.button("Generate Content", key="btn_generate", use_container_width=True):
                     else offline_generic_copy(brief, company)
                 )
 
-            st.success("Draft created!")
+            banner_success("Draft created and saved to history.", f"Timestamp: {now_iso()}")
             st.markdown(draft)
 
             # Save to session history
@@ -373,8 +431,9 @@ if st.button("Generate Content", key="btn_generate", use_container_width=True):
             # Small “looks good” nudges
             if not issues:
                 st.info("Looks good for a first draft. Tweak tone/CTA and regenerate if needed.")
-        except Exception as e:
-            st.error(str(e))
+        
+    except Exception as e:
+            st.error(f"❌ {e}")
 
 divider()
 
