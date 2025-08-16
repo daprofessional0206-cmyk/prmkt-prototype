@@ -58,106 +58,107 @@ with st.container():
             "- Include 1 customer story and 1 analyst/partner quote."
         )
 
-# ---------- 3) Content Engine — AI Copy Generator (offline) ----------
-with st.container():
-    st.header("3️⃣ Content Engine — AI Copy Generator (offline)")
+# ----------------------------------------------------------
+# 3️⃣ Content Engine — AI Copy Generator (live)
+# ----------------------------------------------------------
+import os
+import json
+from openai import OpenAI
 
-    col1, col2, col3 = st.columns(3)
+st.header("3️⃣ Content Engine — AI Copy Generator (live)")
 
-    with col1:
-        content_type = st.selectbox(
-            "Content Type",
-            ["Press Release", "LinkedIn Post", "Twitter/X Post", "Blog Intro", "Email (Outbound)"],
-            index=["Press Release", "LinkedIn Post", "Twitter/X Post", "Blog Intro", "Email (Outbound)"].index(
-                ss_get("content_type", "Press Release")
-            ),
-            key="ce_content_type",
-        )
-        platform = st.selectbox(
-            "Platform (for Social/Ad)",
-            ["Generic", "LinkedIn", "Twitter/X", "Facebook", "Instagram", "YouTube"],
-            index=["Generic", "LinkedIn", "Twitter/X", "Facebook", "Instagram", "YouTube"].index(
-                ss_get("platform", "Generic")
-            ),
-            key="ce_platform",
-        )
+# Read API key from Streamlit secrets or env var
+OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY", ""))
 
-    with col2:
-        tone = st.selectbox(
-            "Tone",
-            ["Neutral", "Professional", "Friendly", "Bold", "Urgent"],
-            index=["Neutral", "Professional", "Friendly", "Bold", "Urgent"].index(ss_get("tone", "Neutral")),
-            key="ce_tone",
-        )
-        audience = st.text_input(
-            "Audience (who is this for?)",
-            value=ss_get("audience", "Decision-makers"),
-            key="ce_audience",
-        )
+# UI controls
+content_type = st.selectbox("Content Type", ["Press Release","Ad Copy","LinkedIn Post","Tweet / X","Email","Landing Page"], index=0)
+tone         = st.selectbox("Tone", ["Neutral","Friendly","Professional","Bold","Playful","Urgent"], index=0)
+length       = st.selectbox("Length", ["Short","Medium","Long"], index=0)
+platform     = st.selectbox("Platform (for Social/Ad)", ["Generic","LinkedIn","Instagram","Facebook","Twitter / X","YouTube","Google Ads"], index=0)
+audience     = st.text_input("Audience (who is this for?)", value="Decision-makers")
+cta          = st.selectbox("Call to Action", ["Book a demo","Sign up","Learn more","Buy now","Contact sales"], index=0)
 
-    with col3:
-        length = st.selectbox(
-            "Length",
-            ["Short", "Medium", "Long"],
-            index=["Short", "Medium", "Long"].index(ss_get("length", "Short")),
-            key="ce_length",
-        )
-        cta = st.selectbox(
-            "Call to Action",
-            ["Book a demo", "Contact sales", "Download whitepaper", "Learn more", "Subscribe"],
-            index=["Book a demo", "Contact sales", "Download whitepaper", "Learn more", "Subscribe"].index(
-                ss_get("cta", "Book a demo")
-            ),
-            key="ce_cta",
-        )
+topic        = st.text_input("Topic / Product / Offer", value="Launch of Acme RoboHub 2.0")
+bullets      = st.text_area("Key Points (bullets, one per line)",
+                            value="• 2× faster setup\n• SOC 2 Type II\n• Save 30% cost")
 
-    topic = st.text_input(
-        "Topic / Product / Offer",
-        value=ss_get("topic", "Launch of Acme RoboHub 2.0"),
-        key="ce_topic",
-    )
-    key_points = st.text_area(
-        "Key Points (bullets, one per line)",
-        value=ss_get("key_points", "2× faster setup\nSOC 2 Type II\nSave 30% cost"),
-        key="ce_keypoints",
-        height=120,
+def _model_name():
+    """
+    Choose a lightweight, inexpensive model by default.
+    You can change this to a larger model later.
+    """
+    return "gpt-4o-mini"  # good balance of quality/cost
+
+def generate_copy():
+    if not OPENAI_API_KEY:
+        return None, "No API key found. Add OPENAI_API_KEY to Streamlit secrets or your environment."
+
+    client = OpenAI(api_key=OPENAI_API_KEY)
+
+    # Build a clean JSON-friendly brief the model can follow
+    brief = {
+        "content_type": content_type,
+        "tone": tone,
+        "length": length,
+        "platform": platform,
+        "audience": audience,
+        "call_to_action": cta,
+        "topic": topic,
+        "key_points": [ln.strip("• ").strip() for ln in bullets.splitlines() if ln.strip()]
+    }
+
+    system_msg = (
+        "You are an expert PR/Marketing copywriter. "
+        "Write clear, on-brand copy using the brief. "
+        "Keep it factual, avoid hallucinations, and include a crisp CTA. "
+        "Return ONLY the copy text (no explanations)."
     )
 
-    if st.button("Generate Content", key="btn_generate"):
-        bullets = bulletize(key_points)
+    user_msg = (
+        "Brief (JSON):\n"
+        f"{json.dumps(brief, ensure_ascii=False, indent=2)}"
+    )
 
-        # very simple text template (offline)
-        now = datetime.utcnow().strftime("%Y-%m-%d")
-        body = [
-            f"[{content_type}] for {platform} — {now}",
-            f"Company: {company_name or 'Your company'}",
-            f"Industry: {industry or 'N/A'} | Size: {size}",
-            f"Audience: {audience} | Tone: {tone} | Length: {length}",
-            "",
-            f"Topic: {topic}",
-            "",
-            "Key Points:",
-            *bullets,
-            "",
-            f"CTA: {cta}",
-        ]
-        st.success("Draft created below (offline template).")
-        st.code("\n".join(body))
+    try:
+        resp = client.chat.completions.create(
+            model=_model_name(),
+            messages=[
+                {"role": "system", "content": system_msg},
+                {"role": "user",    "content": user_msg}
+            ],
+            temperature=0.7,
+        )
+        text = resp.choices[0].message.content.strip()
+        return text, None
+    except Exception as e:
+        return None, f"OpenAI error: {e}"
 
-        # simple checks (no crashes if empty)
-        problems = []
-        if not topic:
-            problems.append("Topic missing — add a topic/product name.")
-        if content_type == "Press Release" and "Press Release" not in topic:
-            # this is just a gentle nudge; not required
-            pass
+if st.button("Generate Content", use_container_width=True):
+    with st.spinner("Generating copy…"):
+        text, err = generate_copy()
+    if err:
+        st.error(err)
+    else:
+        st.success("Draft created!")
+        st.write(text)
+        st.download_button(
+            "Download .txt",
+            data=text.encode("utf-8"),
+            file_name=f"{content_type.lower().replace(' ','_')}.txt",
+            mime="text/plain",
+        )
 
-        if problems:
-            st.warning("Fix these:")
-            for p in problems:
-                st.write("• " + p)
-        else:
-            st.success("Looks good for a first draft.")
+# Lightweight lint (kept from your earlier version)
+problems = []
+if not topic:
+    problems.append("Topic missing — add a topic/product name.")
+if content_type == "Press Release" and "Press Release" not in topic:
+    pass
 
-st.markdown("---")
-st.caption("Prototype v0 — stable inputs (unique keys), safe defaults, and offline content generation.")
+if problems:
+    st.warning("Fix these:")
+    for p in problems:
+        st.write("• " + p)
+else:
+    st.success("Looks good for a first draft.")
+
