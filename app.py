@@ -116,6 +116,44 @@ def require_inputs(company: str, topic: str, bullets: List[str]):
         st.warning("Please fix these:\n\n- " + "\n- ".join(problems))
         st.stop()
 
+        # --- Phase 2: helpers for prompts/variants ---
+LANG_MAP = {
+    "English": "English",
+    "Hindi": "Hindi",
+    "Spanish": "Spanish",
+    "French": "French",
+    "German": "German",
+    "Japanese": "Japanese",
+}
+
+def apply_brand_rules(text: str, rules: str) -> str:
+    """Simple client-side nudge so even offline mode respects rules a bit."""
+    if not rules.strip():
+        return text
+    return f"{text}\n\n---\n(Brand rules considered: {rules[:280]}...)"
+
+# ============ Save/Load helpers (Phase 2 — Step 6.1) ============
+# Make sure 'import json' is at the top of your file. (You already have it.)
+
+def export_history_json() -> str:
+    """Return session history (up to 15) as a JSON string."""
+    try:
+        data = st.session_state.get("history", [])
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    except Exception:
+        return "[]"
+
+def import_history_json(text: str) -> bool:
+    """Load a JSON string into session history."""
+    try:
+        data = json.loads(text)
+        if isinstance(data, list):
+            st.session_state["history"] = data[:15]
+            return True
+        return False
+    except Exception:
+        return False
+
 
 # ---------------- Data classes ----------------
 @dataclass
@@ -317,13 +355,16 @@ Output a brief, 4–6 bullet plan with headline, rationale, primary channel, and
 
 divider()
 
-# ---------------- Section 3: Content Engine (A/B/C variants) ----------------
-st.header("3️⃣ Content Engine — AI Copy (A/B/C)")
+# ============ Section 3 — Content Engine (A/B/C) ============
+st.header("3️⃣  Content Engine — AI Copy (A/B/C)")
 
 left, right = st.columns([1, 1])
+
 with left:
     content_type = st.selectbox(
-        "Content Type", ["Press Release", "Ad", "Social Post", "Landing Page", "Email"], key="ce_type",
+        "Content Type",
+        ["Press Release", "Ad", "Social Post", "Landing Page", "Email"],
+        key="ce_type",
     )
     platform = st.selectbox(
         "Platform (for Social/Ad)",
@@ -343,15 +384,94 @@ with right:
     length = st.selectbox("Length", ["Short", "Medium", "Long"], key="ce_length")
     audience = st.text_input("Audience (who is this for?)", key="ce_audience", placeholder="Decision-makers")
     cta = st.text_input("Call to Action", key="ce_cta", placeholder="Book a demo")
-    language = st.selectbox("Language", ["English", "Hindi", "Gujarati"], index=0, key="ce_lang")
+    language = st.selectbox("Language", list(LANG_MAP.keys()), index=0, key="ce_lang")
 
-st.markdown("### Brand rules (optional)")
+# Brand rules (optional)
+st.subheader("Brand rules (optional)")
 brand_rules = st.text_area(
     "Paste brand do's/don'ts or banned words (optional)",
-    key="brand_rules",
-    placeholder="Example: Do use confident tone. Don’t mention competitors. Avoid words: cheap, disrupt, revolutionary.",
-    height=80,
+    key="ce_brand_rules",
+    placeholder="Avoid superlatives; Use calm, confident voice; Say customer not client; Use British spelling...",
+    height=100,
 )
+
+# Build brief object
+brief = ContentBrief(
+    content_type=content_type,
+    tone=tone,
+    length=length,
+    platform=platform,
+    audience=audience or "Decision-makers",
+    cta=cta,
+    topic=topic,
+    bullets=bulletize(bullets_raw),
+)
+
+# Lightweight QA nudges (no blocking)
+issues = []
+if not brief.topic.strip():
+    issues.append("Add a topic/product name.")
+if issues:
+    with st.expander("Suggested fixes"):
+        for i in issues:
+            st.write("•", i)
+
+# A/B/C variants toggle
+colA, colB, colC = st.columns(3)
+gen_A = colA.checkbox("Generate A", value=True, key="vA")
+gen_B = colB.checkbox("Generate B", value=True, key="vB")
+gen_C = colC.checkbox("Generate C", value=False, key="vC")
+num_variants = sum([gen_A, gen_B, gen_C]) or 1
+
+if st.button("Generate Content", key="btn_generate", use_container_width=True):
+    if not brief.topic.strip():
+        st.warning("Please enter a topic / offer first.")
+    else:
+        try:
+            outputs = []
+            for label, on in zip(["A", "B", "C"], [gen_A, gen_B, gen_C]):
+                if not on:
+                    continue
+
+                if OPENAI_OK:
+                    # Include language + brand rules in the prompt
+                    lang_name = LANG_MAP[language]
+                    prompt = make_prompt(brief, company) + f"\n\nOutput language: {lang_name}."
+                    if brand_rules.strip():
+                        prompt += f"\n\nBrand rules to follow strictly:\n{brand_rules}"
+                    draft = llm_variants(prompt, temperature=0.7, max_tokens=1000)
+                else:
+                    # Offline template with simple brand-rule post-processing
+                    draft = (
+                        offline_variants(brief, company)
+                    )
+                    draft = apply_brand_rules(draft, brand_rules)
+
+                outputs.append((label, draft))
+
+            st.success(f"Created {len(outputs)} variant(s).")
+
+            # Show variants in tabs
+            if outputs:
+                tabs = st.tabs([f"Variant {lbl}" for lbl, _ in outputs])
+                for tab, (lbl, text) in zip(tabs, outputs):
+                    with tab:
+                        st.markdown(text)
+                        # Save to history per variant
+                        add_history(
+                            f"content-{lbl}",
+                            {"company": asdict(company), "brief": asdict(brief), "brand_rules": brand_rules, "language": language},
+                            text,
+                        )
+                        fname = f"{brief.content_type.replace(' ', '_').lower()}_{lbl}_{datetime.now().strftime('%Y%m%d_%H%M')}.txt"
+                        st.download_button("Download .txt", data=text.encode("utf-8"), file_name=fname, mime="text/plain")
+
+            if not issues:
+                st.info("Looks good for a first draft. Tweak tone/CTA/brand rules and regenerate if needed.")
+
+        except Exception as e:
+            st.error(str(e))
+
 
 # Build structured brief
 brief = ContentBrief(
@@ -442,6 +562,48 @@ divider()
 
 # ---------------- History ----------------
 with st.expander("🕘 History (last 20)"):
+    # ============ Save / Load ============
+
+ st.subheader("Save / Load session")
+col1, col2 = st.columns([1,1])
+
+with col1:
+    if st.button("💾 Export history (.json)", key="btn_export_hist"):
+        json_text = export_history_json()
+        st.download_button(
+            "Download history.json",
+            data=json_text.encode("utf-8"),
+            file_name=f"presence_history_{datetime.now().strftime('%Y%m%d_%H%M')}.json",
+            mime="application/json",
+        )
+
+def export_history_json() -> str:
+    """Export session history as a JSON string."""
+    return json.dumps(st.session_state.get("history", []), indent=2)
+
+with col2:
+    up = st.file_uploader("Load history (.json)", type=["json"], key="up_hist")
+    if up is not None:
+        try:
+            ok = import_history_json(up.read().decode("utf-8"))
+            if ok:
+                st.success("Loaded history from JSON.")
+            else:
+                st.warning("File format not recognized.")
+        except Exception as e:
+            st.error(f"Could not load JSON: {e}")
+
+def import_history_json(json_text: str) -> bool:
+    """Import history from a JSON string and update session state."""
+    try:
+        data = json.loads(json_text)
+        if isinstance(data, list):
+            st.session_state["history"] = data[:20]
+            return True
+        return False
+    except Exception:
+        return False
+
     if not st.session_state.history:
         st.caption("No items yet.")
     else:
