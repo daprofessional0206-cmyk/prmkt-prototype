@@ -56,6 +56,19 @@ def bulletize(text: str) -> List[str]:
 def now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
+def export_history_json() -> str:
+    import json
+    return json.dumps(st.session_state.get("history", []), ensure_ascii=False, indent=2)
+
+def import_history_json(json_text: str) -> None:
+    import json
+    items = json.loads(json_text)
+    if isinstance(items, list):
+        st.session_state["history"] = items[:15]
+    else:
+        raise ValueError("JSON must be a list of history items.")
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Sample dataset utilities (Phase 2 / Steps 2–4)
 # ──────────────────────────────────────────────────────────────────────────────
@@ -228,6 +241,7 @@ with st.sidebar:
         "Preview rows", min_value=1, max_value=50, value=5, step=1, key="sb_preview_rows"
     )
 
+
     if st.button("Reset sample data", key="btn_reset_sample"):
         # Overwrite sample and rerun safely (no experimental API)
         if SAMPLE_CSV.exists():
@@ -248,11 +262,25 @@ with st.sidebar:
         st.success("OpenAI: Connected")
     else:
         st.info("OpenAI: Not configured (offline templates)")
+    st.caption("This app uses OpenAI for AI copy generation. If not configured, it uses offline templates.")
+    st.caption("Add your API key in Streamlit Cloud → App settings → Secrets to enable online generation.")
+         # ───────────────
+    # 6.4 — Sidebar: extra status
+    # ───────────────
+    st.divider()
+    st.caption("⚡ Extra status info (Phase 2, Step 6.4)")
+    st.text(f"Preview rows: {preview_rows}")
+    st.text(f"Dataset: {SAMPLE_CSV.name}")
+
+
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Header
 # ──────────────────────────────────────────────────────────────────────────────
 st.title("💡 PR & Marketing AI Platform — v1 Prototype")
+st.caption("Phase 2 adds: A/B/C variants, language selection, brand rules, dataset preview, and better history.")
+divider()
 st.caption("A focused prototype for strategy ideas and content drafts (press releases, ads, posts, emails, etc.)")
 divider()
 
@@ -400,64 +428,116 @@ if st.button("Generate A/B/C Variants", key="btn_generate_variants", use_contain
 
             if OPENAI_OK:
                 # Ask model to return variants separated clearly
-                # (We keep it simple and split on '\n\n---\n\n' if present,
-                #  else present the single block as Variant A.)
                 raw = llm_copy(prompt, temperature=0.65, max_tokens=1200)
-                chunks = [seg.strip() for seg in raw.split("\n---\n") if seg.strip()]
-                if len(chunks) < brief.variants:
-                    # If the model didn’t clearly separate, duplicate splits safely
-                    while len(chunks) < brief.variants:
-                        chunks.append(raw.strip())
-                outputs = chunks[: brief.variants]
-            else:
-                # Offline templates
-                template = (
-                    offline_press_release(brief, company)
-                    if brief.content_type == "Press Release"
-                    else offline_generic_copy(brief, company)
-                )
-                # Make up to N “variants” by slightly labeling them
-                labels = ["Variant A", "Variant B", "Variant C"]
-                outputs = [f"### {labels[i]}\n\n{template}" for i in range(brief.variants)]
+                chunks = [seg.strip() for seg in raw.split("\n\n--\n\n") if seg.strip()]
+
+                # If not enough chunks, duplicate safely
+                while len(chunks) < brief.variants:
+                    chunks.append(chunks[-1])
+
+                outputs = chunks[:brief.variants]
+
+            # --- 6.3 Save results to History ---
+            st.session_state.history.insert(0, {
+                "ts": datetime.now().isoformat(timespec="seconds"),
+                "kind": "Variants",
+                "input": asdict(brief),
+                "output": outputs
+            })
+            # keep only last 20
+            st.session_state.history = st.session_state.history[:20]
 
             st.success("Draft(s) created!")
+
+            # --- 6.4 Display outputs + downloads ---
             for idx, draft in enumerate(outputs, start=1):
                 st.markdown(f"#### Variant {idx}")
                 st.markdown(draft)
 
-                # unique download key per variant
-                fname = f"variant_{idx}_{brief.content_type.replace(' ', '_').lower()}_{datetime.now().strftime('%Y%m%d_%H%M')}.txt"
+                # unique filename
+                fname = f"variant_{idx}_{brief.content_type.replace(' ', '_').lower()}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+
                 st.download_button(
                     label=f"Download Variant {idx} (.txt)",
                     data=draft.encode("utf-8"),
                     file_name=fname,
                     mime="text/plain",
-                    key=f"btn_dl_v{idx}",
+                    key=f"btn_dl_{idx}"
                 )
-                divider()
-
-            # Save to session history
-            add_history(
-                "content",
-                {"company": asdict(company), "brief": asdict(brief)},
-                "\n\n---\n\n".join(outputs),
-            )
+                st.divider()
 
         except Exception as e:
-            st.error(str(e))
+            st.error(f"Error while generating: {e}")
+
 
 divider()
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 4) History
+# 4) History (with Export / Import / Clear)
 # ──────────────────────────────────────────────────────────────────────────────
-with st.expander("🕘 History (last 20)"):
+with st.expander("🕘 History (last 20)", expanded=False):
+    # Top row of actions
+    col_h1, col_h2, col_h3 = st.columns([1,1,1])
+    with col_h1:
+        if st.button("⬇️ Export JSON", key="btn_hist_export"):
+            st.download_button(
+                "Download history.json",
+                data=export_history_json().encode("utf-8"),
+                file_name="history.json",
+                mime="application/json",
+                key="btn_hist_export_dl"
+            )
+    with col_h2:
+        if st.button("🗑️ Clear history", key="btn_hist_clear"):
+            st.session_state["history"] = []
+            st.success("History cleared.")
+            st.rerun()
+    with col_h3:
+        st.caption("Import JSON below and press **Load**.")
+
+    # Import UI
+    with st.form("hist_import_form"):
+        json_text = st.text_area("Paste exported history JSON here", height=140, key="ta_hist_import")
+        submitted = st.form_submit_button("Load")
+        if submitted:
+            try:
+                import_history_json(json_text)
+                st.success("History imported.")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Import failed: {e}")
+
+    divider()
+
+    # Items list
     if not st.session_state.history:
         st.caption("No items yet.")
     else:
         for i, item in enumerate(st.session_state.history, start=1):
             st.markdown(f"**{i}. {item['kind']}** · {item['ts']}")
             with st.expander("View"):
-                st.code(json.dumps(item["input"], indent=2))
-                st.markdown(item["output"])
+                # Show input (pretty JSON)
+                st.markdown("**Input**")
+                st.code(json.dumps(item["input"], indent=2), language="json")
+
+                # Show output(s)
+                st.markdown("**Output**")
+                out = item["output"]
+                if isinstance(out, list):
+                    for idx, draft in enumerate(out, start=1):
+                        st.markdown(f"##### Variant {idx}")
+                        st.markdown(draft)
+                        st.download_button(
+                            label=f"Download Variant {idx} (.txt)",
+                            data=draft.encode("utf-8"),
+                            file_name=f"history_variant_{idx}.txt",
+                            mime="text/plain",
+                            key=f"btn_hist_dl_{i}_{idx}",
+                        )
+                        st.divider()
+                else:
+                    st.markdown(out)
             divider()
+
+            
+
