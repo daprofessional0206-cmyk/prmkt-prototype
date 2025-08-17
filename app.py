@@ -495,17 +495,36 @@ with st.expander("🕘 History (last 20)", expanded=False):
     with col_h3:
         st.caption("Import JSON below and press **Load**.")
 
-    # Import UI
-    with st.form("hist_import_form"):
-        json_text = st.text_area("Paste exported history JSON here", height=140, key="ta_hist_import")
-        submitted = st.form_submit_button("Load")
-        if submitted:
+# --- Import JSON (file OR paste) ---
+st.markdown("### Import history")
+
+c1, c2 = st.columns([1, 1])
+
+with c1:
+    file_up = st.file_uploader("Upload history.json", type=["json"], key="hist_file_up")
+    if st.button("Import from file", key="btn_hist_import_file"):
+        if file_up is None:
+            st.warning("Choose a JSON file first.")
+        else:
             try:
-                import_history_json(json_text)
+                import_history_json(file_up.read().decode("utf-8"))
+                st.success("History imported from file.")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Import failed: {e}")
+
+with c2:
+    with st.form("hist_import_form"):
+        pasted = st.text_area("…or paste exported history JSON here", height=140, key="hist_paste_box")
+        ok = st.form_submit_button("Load", use_container_width=False)
+        if ok:
+            try:
+                import_history_json(pasted)
                 st.success("History imported.")
                 st.rerun()
             except Exception as e:
                 st.error(f"Import failed: {e}")
+
 
     divider()
 
