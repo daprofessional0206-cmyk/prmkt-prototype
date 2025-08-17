@@ -8,6 +8,39 @@ from typing import List, Optional
 import streamlit as st          # <-- ADD/KEEP THIS
 from pathlib import Path        # dataset utils use this
 import pandas as pd             # dataset utils use this
+
+# ---- Dataset utils (Step 2) ----
+from pathlib import Path
+import pandas as pd
+
+DATA_DIR   = Path(__file__).parent / "data"
+SAMPLE_CSV = DATA_DIR / "sample_dataset.csv"
+
+@st.cache_data(show_spinner=False)
+def load_csv(path: Path, nrows: int | None = None) -> pd.DataFrame:
+    # robust CSV reader
+    df = pd.read_csv(
+        path,
+        sep=",",
+        engine="python",
+        on_bad_lines="skip",
+        nrows=nrows
+    )
+    if nrows:
+        df = df.head(nrows)
+    return df
+
+def ensure_sample_dataset() -> None:
+    """Create a tiny sample CSV if it doesn't exist (or is empty)."""
+    DATA_DIR.mkdir(exist_ok=True)
+    if not SAMPLE_CSV.exists() or SAMPLE_CSV.stat().st_size < 10:
+        SAMPLE_CSV.write_text(
+            "date,channel,post_type,headline,copy,clicks,impressions,engagement_rate\n"
+            "2025-08-01,LinkedIn,post,Acme RoboHub 2.0 Launch,Fast setup & SOC2 ready,182,12200,2.1%\n"
+            "2025-08-02,Email,newsletter,Why teams switch to Acme,Save 30% with automation,96,8400,1.4%\n"
+            "2025-08-03,YouTube,short,Demo in 60 sec,See RoboHub in action,211,20500,3.0%\n"
+        )
+
 # ---- Dataset utils (Step 2) ----
 
 DATA_DIR = Path(__file__).parent / "data"
