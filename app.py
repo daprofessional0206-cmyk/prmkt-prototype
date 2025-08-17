@@ -21,11 +21,11 @@ def divider():
     )
 
 def now_iso() -> str:
-    """UTC timestamp for history items / filenames."""
+    from datetime import datetime, timezone
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-def bulletize(text: str) -> list[str]:
-    """Split textarea lines into bullets (trim, drop empties, cap list)."""
+def bulletize(text: str) -> List[str]:
+    """Split textarea lines into bullets (drop empties, trim, max 15)."""
     lines = [ln.strip("•- \t") for ln in text.splitlines() if ln.strip()]
     return lines[:15]
 
@@ -205,42 +205,47 @@ def add_history(kind: str, payload: dict, output: str):
 # ============ Sidebar ============
 
 with st.sidebar:
-    # Dataset preview (Phase 2 – Step 4)
-    st.subheader("▦ Dataset preview")
-    ensure_sample_dataset()
+    st.subheader("📊 Dataset preview")
+
+    # rows selector
+    nrows = st.number_input(
+        "Preview rows",
+        min_value=1, max_value=50, value=5, step=1,
+        key="sb_preview_rows"
+    )
 
     cols = st.columns([1, 1])
     with cols[0]:
-        nrows = st.number_input("Preview rows", min_value=1, max_value=50, value=5, step=1, key="sb_preview_rows")
+        st.write("")  # spacing
     with cols[1]:
-        if st.button("Reset sample data"):
-            # nuke cache + recreate file
-            if SAMPLE_CSV.exists():
-                SAMPLE_CSV.unlink()
-            st.cache_data.clear()
+        if st.button("Reset sample data", key="sb_reset_sample"):
+            # Rebuild the sample CSV and rerun the app to refresh the table
+            SAMPLE_CSV.unlink(missing_ok=True)
             ensure_sample_dataset()
-            st.success("Sample dataset recreated.")
+            st.experimental_rerun()
 
     try:
-        df_preview = load_csv(SAMPLE_CSV, nrows=nrows)
-        st.caption(f"Dataset: `{SAMPLE_CSV.name}`")
+        df_preview = load_csv(Path(SAMPLE_CSV), nrows=nrows)
+        st.caption(f"Dataset: `{Path(SAMPLE_CSV).name}`")
         st.dataframe(df_preview, use_container_width=True, height=220)
     except Exception as e:
         st.warning(f"Could not load dataset preview: {e}")
 
-    divider()
     st.subheader("⚙️ App Status")
     if OPENAI_OK:
         st.success("OpenAI: Connected")
     else:
         st.info("OpenAI: Not configured (offline templates)")
 
+
 # ============ Header ============
+
+# Ensure the sample CSV exists before we render anything
+ensure_sample_dataset()
+
 st.title("💡 PR & Marketing AI Platform — v1 Prototype")
 st.caption("A focused prototype for strategy ideas and content drafts (press releases, ads, posts, emails, etc.)")
-
 divider()
-
 # ============ Section 1 — Company Profile ============
 st.header("1️⃣  Company Profile")
 
