@@ -1,36 +1,31 @@
-# app.py — Presence (Phase 2 up to Step 6.2)
+# app.py — Presence v2.0 (Phase 2 complete)
 
 from __future__ import annotations
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Streamlit MUST be imported before any code that uses `st`
+# Imports
 # ──────────────────────────────────────────────────────────────────────────────
-import streamlit as st
-
-# Standard libs
 import json
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
-from typing import List, Optional
 from pathlib import Path
+from typing import List
 
-# Data
 import pandas as pd
+import streamlit as st
 
 # ──────────────────────────────────────────────────────────────────────────────
-# App wide config
+# App config + light CSS
 # ──────────────────────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="Presence — PR & Marketing AI Prototype",
     page_icon="📣",
     layout="wide",
 )
-
-# Small CSS polish
 st.markdown(
     """
     <style>
-      .block-container { padding-top: 1.0rem; padding-bottom: 2.5rem; }
+      .block-container { padding-top: 1.0rem; padding-bottom: 2.2rem; }
       .stTextArea textarea { font-size: 0.95rem; line-height: 1.45; }
       .stDownloadButton button { width: 100%; }
     </style>
@@ -42,32 +37,14 @@ st.markdown(
 # Helpers
 # ──────────────────────────────────────────────────────────────────────────────
 def divider() -> None:
-    """Thin horizontal divider to separate sections."""
-    st.markdown(
-        "<hr style='border: 1px solid #202431; margin: 1.1rem 0;'/>",
-        unsafe_allow_html=True,
-    )
+    st.markdown("<hr style='border: 1px solid #202431; margin: 1.1rem 0;'/>", unsafe_allow_html=True)
 
 def bulletize(text: str) -> List[str]:
-    """Split multi-line textarea into cleaned bullets (max 15)."""
     lines = [ln.strip("•- \t") for ln in text.splitlines() if ln.strip()]
     return lines[:15]
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-def export_history_json() -> str:
-    import json
-    return json.dumps(st.session_state.get("history", []), ensure_ascii=False, indent=2)
-
-def import_history_json(json_text: str) -> None:
-    import json
-    items = json.loads(json_text)
-    if isinstance(items, list):
-        st.session_state["history"] = items[:15]
-    else:
-        raise ValueError("JSON must be a list of history items.")
-
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Sample dataset utilities (Phase 2 / Steps 2–4)
@@ -83,7 +60,6 @@ def load_csv(path: Path, nrows: int | None = None) -> pd.DataFrame:
     return df
 
 def ensure_sample_dataset() -> None:
-    """Create/overwrite small sample CSV so preview always works."""
     DATA_DIR.mkdir(exist_ok=True)
     if not SAMPLE_CSV.exists():
         SAMPLE_CSV.write_text(
@@ -93,11 +69,10 @@ def ensure_sample_dataset() -> None:
             "2025-08-05,Instagram,reel,Behind-the-scenes of RoboHub,Meet the team that builds speed,980,45900,1.6\n"
         )
 
-# Ensure preview dataset exists
 ensure_sample_dataset()
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Optional OpenAI client (auto-detect)
+# Optional OpenAI client (auto-detect via secrets)
 # ──────────────────────────────────────────────────────────────────────────────
 OPENAI_OK = False
 client = None
@@ -135,15 +110,23 @@ class ContentBrief:
     variants: int = 1
     brand_rules: str = ""
 
-# Session history
+# Session state
 if "history" not in st.session_state:
-    st.session_state["history"] = []  # type: ignore
+    st.session_state["history"] = []  # list[dict]
+if "next_id" not in st.session_state:
+    st.session_state["next_id"] = 1   # for stable IDs in history
 
-def add_history(kind: str, payload: dict, output: str):
-    st.session_state.history.insert(
-        0,
-        {"ts": now_iso(), "kind": kind, "input": payload, "output": output},
-    )
+def add_history(kind: str, payload: dict, output):
+    item = {
+        "id": st.session_state["next_id"],
+        "ts": now_iso(),
+        "kind": kind,      # "strategy", "content", "Variants"
+        "input": payload,  # dict
+        "output": output,  # str or list[str]
+        "tags": [],        # editable in UI
+    }
+    st.session_state["next_id"] += 1
+    st.session_state.history.insert(0, item)
     st.session_state.history = st.session_state.history[:20]
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -231,19 +214,17 @@ Next step: **{cta_line}**
 """
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Sidebar: Dataset preview + App status (Phase 2 / Steps 3–4)
+# Sidebar: Dataset preview + App status
 # ──────────────────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.subheader("📁 Dataset preview")
-    st.caption("Preview the dataset to understand its structure and contents.")
+    st.caption("Preview the sample dataset used in Phase 2.")
 
     preview_rows = st.number_input(
         "Preview rows", min_value=1, max_value=50, value=5, step=1, key="sb_preview_rows"
     )
 
-
-    if st.button("Reset sample data", key="btn_reset_sample"):
-        # Overwrite sample and rerun safely (no experimental API)
+    if st.button("Start over (reset sample data)", key="btn_reset_sample"):
         if SAMPLE_CSV.exists():
             SAMPLE_CSV.unlink()
         ensure_sample_dataset()
@@ -262,26 +243,14 @@ with st.sidebar:
         st.success("OpenAI: Connected")
     else:
         st.info("OpenAI: Not configured (offline templates)")
-    st.caption("This app uses OpenAI for AI copy generation. If not configured, it uses offline templates.")
-    st.caption("Add your API key in Streamlit Cloud → App settings → Secrets to enable online generation.")
-         # ───────────────
-    # 6.4 — Sidebar: extra status
-    # ───────────────
-    st.divider()
-    st.caption("⚡ Extra status info (Phase 2, Step 6.4)")
-    st.text(f"Preview rows: {preview_rows}")
-    st.text(f"Dataset: {SAMPLE_CSV.name}")
-
-
-
+    st.caption("Add `OPENAI_API_KEY` in Streamlit Cloud → App → Secrets to enable online LLM.")
+st.divider()
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Header
 # ──────────────────────────────────────────────────────────────────────────────
-st.title("💡 PR & Marketing AI Platform — v1 Prototype")
-st.caption("Phase 2 adds: A/B/C variants, language selection, brand rules, dataset preview, and better history.")
-divider()
-st.caption("A focused prototype for strategy ideas and content drafts (press releases, ads, posts, emails, etc.)")
+st.title("💡 Presence — PR & Marketing AI (v2 Prototype)")
+st.caption("Strategy ideas, multi-variant content drafts, brand rules, language, and history with filters/tagging.")
 divider()
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -293,9 +262,9 @@ col1, col2, col3 = st.columns([2, 1.4, 1.2])
 with col1:
     company_name = st.text_input("Company Name", value="Acme Innovations", key="cp_name")
 with col2:
-    industry = st.text_input("Industry / Sector", value="Robotics, Fintech, Retail…", key="cp_industry")
+    industry     = st.text_input("Industry / Sector", value="Robotics, Fintech, Retail…", key="cp_industry")
 with col3:
-    size = st.selectbox("Company Size", ["Small", "Mid-market", "Enterprise"], index=1, key="cp_size")
+    size         = st.selectbox("Company Size", ["Small", "Mid-market", "Enterprise"], index=1, key="cp_size")
 
 goals = st.text_area(
     "Business Goals (one or two sentences)",
@@ -323,7 +292,6 @@ Propose a practical PR/Marketing initiative for {company.name} ({company.industr
 Goals: {company.goals or "(not specified)"}.
 Output a brief, 4–6 bullet plan with headline, rationale, primary channel, and success metrics.
 """.strip()
-
     try:
         idea = llm_copy(prompt, temperature=0.5, max_tokens=350) if OPENAI_OK else (
             f"""**Campaign Idea: “Momentum Now”**
@@ -373,7 +341,6 @@ with right:
     audience = st.text_input("Audience (who is this for?)", value="Decision-makers", key="ce_audience")
     cta = st.text_input("Call to Action", value="Book a demo", key="ce_cta")
 
-# Phase 2 additions
 st.subheader("Brand rules (optional)")
 brand_rules = st.text_area(
     "Paste brand do’s/don’ts or banned words (optional)",
@@ -407,7 +374,6 @@ brief = ContentBrief(
     brand_rules=brand_rules or "",
 )
 
-# Hints
 issues = []
 if not brief.topic.strip():
     issues.append("Add a topic/product name.")
@@ -416,47 +382,40 @@ if issues:
         for i in issues:
             st.write("•", i)
 
-# Generate button (UNIQUE KEY)
-if st.button("Generate A/B/C Variants", key="btn_generate_variants", use_container_width=True):
+if st.button("Generate Variants (A/B/C)", key="btn_generate_variants", use_container_width=True):
     if not brief.topic.strip():
         st.warning("Please enter a topic / offer first.")
     else:
         try:
-            # Build LLM prompt once
             prompt = make_prompt(brief, company)
             outputs: List[str] = []
 
             if OPENAI_OK:
-                # Ask model to return variants separated clearly
                 raw = llm_copy(prompt, temperature=0.65, max_tokens=1200)
+                # Expecting multiple variants separated by blank lines; if your model returns a delimiter, you can split on that.
+                # Simple fallback: split by two newlines; if fewer chunks than requested, duplicate last.
                 chunks = [seg.strip() for seg in raw.split("\n\n--\n\n") if seg.strip()]
-
-                # If not enough chunks, duplicate safely
+                if not chunks:
+                    chunks = [seg.strip() for seg in raw.split("\n\n") if seg.strip()]
                 while len(chunks) < brief.variants:
                     chunks.append(chunks[-1])
-
                 outputs = chunks[:brief.variants]
+            else:
+                # Offline fallback: one generic template (duplicate if variants > 1)
+                base = (
+                    offline_press_release(brief, company)
+                    if brief.content_type == "Press Release"
+                    else offline_generic_copy(brief, company)
+                )
+                outputs = [base for _ in range(brief.variants)]
 
-            # --- 6.3 Save results to History ---
-            st.session_state.history.insert(0, {
-                "ts": datetime.now().isoformat(timespec="seconds"),
-                "kind": "Variants",
-                "input": asdict(brief),
-                "output": outputs
-            })
-            # keep only last 20
-            st.session_state.history = st.session_state.history[:20]
-
+            add_history("Variants", {"company": asdict(company), "brief": asdict(brief)}, outputs)
             st.success("Draft(s) created!")
 
-            # --- 6.4 Display outputs + downloads ---
             for idx, draft in enumerate(outputs, start=1):
                 st.markdown(f"#### Variant {idx}")
                 st.markdown(draft)
-
-                # unique filename
                 fname = f"variant_{idx}_{brief.content_type.replace(' ', '_').lower()}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-
                 st.download_button(
                     label=f"Download Variant {idx} (.txt)",
                     data=draft.encode("utf-8"),
@@ -469,94 +428,113 @@ if st.button("Generate A/B/C Variants", key="btn_generate_variants", use_contain
         except Exception as e:
             st.error(f"Error while generating: {e}")
 
-
 divider()
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 4) History (with Export / Import / Clear)
+# 4) History — filters, search, tagging, export/import (Phase 2 Step 6.5)
 # ──────────────────────────────────────────────────────────────────────────────
-with st.expander("🕘 History (last 20)", expanded=False):
-    # Top row of actions
-    col_h1, col_h2, col_h3 = st.columns([1,1,1])
-    with col_h1:
-        if st.button("⬇️ Export JSON", key="btn_hist_export"):
-            st.download_button(
-                "Download history.json",
-                data=export_history_json().encode("utf-8"),
-                file_name="history.json",
-                mime="application/json",
-                key="btn_hist_export_dl"
-            )
-    with col_h2:
-        if st.button("🗑️ Clear history", key="btn_hist_clear"):
-            st.session_state["history"] = []
-            st.success("History cleared.")
-            st.rerun()
-    with col_h3:
-        st.caption("Import JSON below and press **Load**.")
-
-# --- Import JSON (file OR paste) ---
-st.markdown("### Import history")
-
-c1, c2 = st.columns([1, 1])
-
-with c1:
-    file_up = st.file_uploader("Upload history.json", type=["json"], key="hist_file_up")
-    if st.button("Import from file", key="btn_hist_import_file"):
-        if file_up is None:
-            st.warning("Choose a JSON file first.")
-        else:
-            try:
-                import_history_json(file_up.read().decode("utf-8"))
-                st.success("History imported from file.")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Import failed: {e}")
-
-with c2:
-    with st.form("hist_import_form"):
-        pasted = st.text_area("…or paste exported history JSON here", height=140, key="hist_paste_box")
-        ok = st.form_submit_button("Load", use_container_width=False)
-        if ok:
-            try:
-                import_history_json(pasted)
-                st.success("History imported.")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Import failed: {e}")
-
-
-    divider()
-
-    # Items list
-    if not st.session_state.history:
+with st.expander("🕘 History (last 20)"):
+    hist: list[dict] = st.session_state.get("history", [])
+    if not hist:
         st.caption("No items yet.")
     else:
-        for i, item in enumerate(st.session_state.history, start=1):
-            st.markdown(f"**{i}. {item['kind']}** · {item['ts']}")
-            with st.expander("View"):
-                # Show input (pretty JSON)
-                st.markdown("**Input**")
-                st.code(json.dumps(item["input"], indent=2), language="json")
+        kinds = sorted({h.get("kind", "content") for h in hist})
+        all_tags = sorted({t for h in hist for t in h.get("tags", [])})
 
-                # Show output(s)
-                st.markdown("**Output**")
-                out = item["output"]
+        c1, c2, c3 = st.columns([1.2, 1.5, 1.2])
+        with c1:
+            kind_filter = st.multiselect("Filter by type", options=kinds, default=kinds, key="hist_kind_filter")
+        with c2:
+            tag_filter = st.multiselect("Filter by tag(s)", options=all_tags, default=[], key="hist_tag_filter")
+        with c3:
+            text_query = st.text_input("Search text", value="", key="hist_search")
+
+        def match_item(h: dict) -> bool:
+            if h.get("kind") not in kind_filter:
+                return False
+            tags = set(h.get("tags", []))
+            if tag_filter and not set(tag_filter).issubset(tags):
+                return False
+            if text_query.strip():
+                q = text_query.strip().lower()
+                out = h.get("output")
+                out_str = "\n\n".join(out) if isinstance(out, list) else (out or "")
+                inp_str = json.dumps(h.get("input", {}), ensure_ascii=False)
+                if q not in out_str.lower() and q not in inp_str.lower():
+                    return False
+            return True
+
+        filtered = [h for h in hist if match_item(h)]
+
+        e1, e2 = st.columns([1, 1])
+        with e1:
+            st.download_button(
+                "Export history (.json)",
+                data=json.dumps(hist, ensure_ascii=False, indent=2).encode("utf-8"),
+                file_name=f"presence_history_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                mime="application/json",
+                key="btn_export_history",
+            )
+        with e2:
+            uploaded = st.file_uploader("Import history (.json)", type=["json"], key="uploader_hist")
+            if uploaded is not None:
+                try:
+                    imported = json.loads(uploaded.read().decode("utf-8"))
+                    if isinstance(imported, list):
+                        for it in imported:
+                            if "id" not in it:
+                                it["id"] = st.session_state["next_id"]
+                                st.session_state["next_id"] += 1
+                            if "tags" not in it:
+                                it["tags"] = []
+                        st.session_state["history"] = imported[:20]
+                        st.success("History imported.")
+                        st.rerun()
+                    else:
+                        st.error("JSON must be a list of history items.")
+                except Exception as e:
+                    st.error(f"Import failed: {e}")
+
+        st.caption(f"Showing {len(filtered)} of {len(hist)} item(s).")
+        st.divider()
+
+        for i, item in enumerate(filtered, start=1):
+            hid = item.get("id", i)
+            st.markdown(f"**{i}. {item.get('kind','content')}** · {item.get('ts','')}")
+            with st.expander("Open"):
+                st.code(json.dumps(item.get("input", {}), ensure_ascii=False, indent=2))
+                out = item.get("output")
                 if isinstance(out, list):
-                    for idx, draft in enumerate(out, start=1):
-                        st.markdown(f"##### Variant {idx}")
-                        st.markdown(draft)
-                        st.download_button(
-                            label=f"Download Variant {idx} (.txt)",
-                            data=draft.encode("utf-8"),
-                            file_name=f"history_variant_{idx}.txt",
-                            mime="text/plain",
-                            key=f"btn_hist_dl_{i}_{idx}",
-                        )
+                    for idx, v in enumerate(out, start=1):
+                        st.markdown(f"**Variant {idx}**")
+                        st.markdown(v)
                         st.divider()
                 else:
-                    st.markdown(out)
-            divider()
+                    st.markdown(out or "")
 
+                t1, t2, t3, t4 = st.columns([1, 1, 1, 2])
+                with t1:
+                    if st.button("👍 Good", key=f"tag_good_{hid}"):
+                        tags = set(item.get("tags", [])); tags.add("good")
+                        item["tags"] = sorted(tags)
+                        st.success("Tagged: good"); st.rerun()
+                with t2:
+                    if st.button("📝 Needs review", key=f"tag_review_{hid}"):
+                        tags = set(item.get("tags", [])); tags.add("needs review")
+                        item["tags"] = sorted(tags)
+                        st.info("Tagged: needs review"); st.rerun()
+                with t3:
+                    if st.button("✅ Approved", key=f"tag_ok_{hid}"):
+                        tags = set(item.get("tags", [])); tags.add("approved")
+                        item["tags"] = sorted(tags)
+                        st.success("Tagged: approved"); st.rerun()
+                with t4:
+                    cur = ", ".join(item.get("tags", []))
+                    new_tags_str = st.text_input("Edit tags (comma-separated)", value=cur, key=f"edit_tags_{hid}")
+                    if st.button("Save tags", key=f"save_tags_{hid}"):
+                        cleaned = [t.strip() for t in new_tags_str.split(",") if t.strip()]
+                        item["tags"] = sorted(set(cleaned))
+                        st.success("Tags saved"); st.rerun()
+
+            divider() 
             
-
