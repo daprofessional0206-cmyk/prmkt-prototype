@@ -1,121 +1,108 @@
 # app.py
 from __future__ import annotations
 
-# IMPORTANT: Streamlit must be imported BEFORE any line that uses `st`
-import streamlit as st
-
 import json
+import time
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import List, Optional
 
-# Phase 2: dataset utils
-from pathlib import Path
+import streamlit as st
 import pandas as pd
-# --- simple helpers (place these right after imports) ---
-def divider():
-    """Thin horizontal divider to separate sections."""
-    st.markdown(
-        "<hr style='border: 1px solid #202431; margin: 1.1rem 0;'/>",
-        unsafe_allow_html=True,
-    )
 
-def now_iso() -> str:
-    from datetime import datetime, timezone
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+# ---------------- App Config ----------------
+st.set_page_config(
+    page_title="Presence — PR & Marketing Prototype",
+    page_icon="📢",
+    layout="wide",
+)
 
-def bulletize(text: str) -> List[str]:
-    """Split textarea lines into bullets (drop empties, trim, max 15)."""
-    lines = [ln.strip("•- \t") for ln in text.splitlines() if ln.strip()]
-    return lines[:15]
+# ---------------- Small CSS polish ----------------
+st.markdown(
+    """
+<style>
+    .block-container { padding-top: 1.0rem; padding-bottom: 2.5rem; }
+    .stTextArea textarea { font-size: 0.95rem; line-height: 1.45; }
+    .stDownloadButton button { width: 100%; }
+    .brand-ok { color: #16a34a; font-weight: 600; }
+    .brand-warn { color: #b45309; font-weight: 600; }
+</style>
+""",
+    unsafe_allow_html=True,
+)
 
-
-# ============ Phase 2: Dataset utils ============
-DATA_DIR = Path(__file__).parent / "data"
+# ---------------- Data constants (Phase 2) ----------------
+DATA_DIR = Path("data")
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 SAMPLE_CSV = DATA_DIR / "sample_dataset.csv"
 
-@st.cache_data(show_spinner=False)
-def load_csv(path: Path, nrows: int | None = None) -> pd.DataFrame:
-    df = pd.read_csv(path)
-    if nrows:
-        df = df.head(nrows)
-    return df
 
 def ensure_sample_dataset() -> None:
-    """Create a tiny sample CSV if it doesn't exist, so preview always works."""
-    DATA_DIR.mkdir(exist_ok=True)
-    if not SAMPLE_CSV.exists():
-        SAMPLE_CSV.write_text(
-            "date,channel,post_type,headline,copy,clicks,impressions,engagement_rate\n"
-            "2025-08-01,LinkedIn,post,Acme RoboHub 2.0 Launch,Fast setup & SOC2 Type II,124,6500,0.023\n"
-            "2025-08-03,Email,newsletter,Why customers switch to Acme,Save 30% with faster onboarding,201,11890,0.017\n"
-            "2025-08-05,Instagram,reel,Behind-the-scenes of RoboHub,Meet the team that builds speed,342,24010,0.028\n"
-        )
+    """Create a small demo CSV if missing."""
+    if SAMPLE_CSV.exists():
+        return
+    rows = [
+        {"date": "2025-08-01", "channel": "LinkedIn", "post_type": "post",
+         "headline": "Acme RoboHub 2.0 Launch", "copy": "Fast setup • SOC 2 Type II • Save 30%"},
+        {"date": "2025-08-03", "channel": "Email", "post_type": "newsletter",
+         "headline": "Why customers switch to Acme", "copy": "Cut onboarding time in half"},
+        {"date": "2025-08-05", "channel": "Instagram", "post_type": "reel",
+         "headline": "Behind-the-scenes", "copy": "Meet the team building speed"},
+        {"date": "2025-08-08", "channel": "X/Twitter", "post_type": "thread",
+         "headline": "RoboHub 2.0 tips", "copy": "3 ways to launch in hours"},
+    ]
+    pd.DataFrame(rows).to_csv(SAMPLE_CSV, index=False)
 
-# ============ Optional OpenAI ============
+
+@st.cache_data(show_spinner=False)
+def load_csv(path: Path, nrows: Optional[int] = None) -> pd.DataFrame:
+    df = pd.read_csv(path)
+    if nrows:
+        return df.head(int(nrows))
+    return df
+
+
+# ---------- OpenAI (auto-detect via st.secrets) ----------
 OPENAI_OK = False
-MODEL = "gpt-4o-mini"
+MODEL = "gpt-4o-mini"  # fast & affordable
 client = None
 if "OPENAI_API_KEY" in st.secrets and st.secrets["OPENAI_API_KEY"]:
     try:
         from openai import OpenAI
+
         client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
         OPENAI_OK = True
     except Exception:
         OPENAI_OK = False
 
-SYSTEM_PROMPT = """You are an expert PR & Marketing copywriter.
-Write clear, compelling, brand-safe copy. Keep facts generic unless provided.
-Return only the copy, no preface.
-"""
 
-def llm_copy(prompt: str, temperature: float = 0.6, max_tokens: int = 600) -> str:
-    if not OPENAI_OK or client is None:
-        raise RuntimeError("OpenAI is not configured.")
-    resp = client.chat.completions.create(
-        model=MODEL,
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": prompt},
-        ],
-        temperature=temperature,
-        max_tokens=max_tokens,
-    )
-    return (resp.choices[0].message.content or "").strip()
+# ---------------- Helpers & guardrails ----------------
+def divider():
+    st.markdown("<hr style='border: 1px solid #202431; margin: 0.9rem 0;'/>", unsafe_allow_html=True)
 
-# ============ Data models ============
-@dataclass
-class Company:
-    name: str
-    industry: str
-    size: str
-    goals: str
 
-@dataclass
-class ContentBrief:
-    content_type: str
-    tone: str
-    length: str
-    platform: str
-    audience: str
-    cta: str
-    topic: str
-    bullets: List[str]
+def now_iso() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-# ============ Session state ============
-if "history" not in st.session_state:
-    st.session_state["history"] = []
 
-# ============ Guardrails ============
-import time
+def bulletize(text: str) -> List[str]:
+    lines = [ln.strip("•- \t") for ln in text.splitlines() if ln.strip()]
+    return lines[:15]
 
-def require_secrets_if_online(online_flag: bool):
-    if online_flag:
-        if "OPENAI_API_KEY" not in st.secrets or not st.secrets["OPENAI_API_KEY"]:
-            st.error("🔐 Missing OpenAI API key. Add it in Streamlit Cloud → App settings → Secrets.")
-            st.stop()
 
-def require_inputs(company: str, topic: str, bullets: list[str]):
+def throttle(seconds: int = 8):
+    """Prevent accidental double runs."""
+    now = time.time()
+    last = st.session_state.get("last_gen", 0)
+    if now - last < seconds:
+        wait = int(seconds - (now - last))
+        st.info(f"⏳ Please wait {wait}s before generating again.")
+        st.stop()
+    st.session_state["last_gen"] = now
+
+
+def require_inputs(company: str, topic: str, bullets: List[str]):
     problems = []
     if not company.strip():
         problems.append("Company name is required.")
@@ -129,150 +116,158 @@ def require_inputs(company: str, topic: str, bullets: list[str]):
         st.warning("Please fix these:\n\n- " + "\n- ".join(problems))
         st.stop()
 
-def throttle(seconds: int = 8):
-    now = time.time()
-    last = st.session_state.get("last_gen", 0)
-    if now - last < seconds:
-        wait = int(seconds - (now - last))
-        st.info(f"⏳ Please wait {wait}s before generating again.")
-        st.stop()
-    st.session_state["last_gen"] = now
 
-# ============ Generators ============
-def offline_press_release(br: ContentBrief, co: Company) -> str:
-    bullets_md = "\n".join([f"- {b}" for b in br.bullets]) if br.bullets else "- (add key benefits)"
-    cta_line = br.cta or "Contact us to learn more."
-    return f"""FOR IMMEDIATE RELEASE
+# ---------------- Data classes ----------------
+@dataclass
+class Company:
+    name: str
+    industry: str
+    size: str
+    goals: str
 
-{co.name} Unveils {br.topic}: {br.tone} Impact for {co.industry}
 
-[City, Date] – {co.name} announces {br.topic}, advancing {co.industry.lower()} leaders with {br.length.lower()}-format benefits.
-This launch supports our goal to: {co.goals or "deliver measurable value and growth."}
+@dataclass
+class ContentBrief:
+    content_type: str
+    tone: str
+    length: str
+    platform: str
+    audience: str
+    cta: str
+    topic: str
+    bullets: List[str]
+    language: str
 
-Key points:
-{bullets_md}
 
-Why it matters for {br.audience.lower()}:
-- Reduces friction and speeds outcomes
-- Improves confidence with clear, compliant communication
-- Scales across {br.platform.lower()} channels
+# ---------------- Session: history ----------------
+if "history" not in st.session_state:
+    st.session_state["history"] = []  # type: ignore
 
-{cta_line}
+
+def add_history(kind: str, payload: dict, output: dict):
+    st.session_state.history.insert(
+        0, {"ts": now_iso(), "kind": kind, "input": payload, "output": output}
+    )
+    st.session_state.history = st.session_state.history[:20]
+
+
+# ---------------- LLM prompts ----------------
+SYSTEM_PROMPT = """You are Presence, an expert PR & Marketing copywriter.
+- Write clear, compelling, brand-safe copy.
+- Use only facts provided; do not invent specifics.
+- Match requested tone, audience, length, and language.
+- Include a strong CTA when requested.
+Return only the copy for each variant, with headings 'Variant A/B/C'.
 """
 
-def offline_generic_copy(br: ContentBrief, co: Company) -> str:
-    bullets_md = "\n".join([f"• {b}" for b in br.bullets]) if br.bullets else "• Add 2–3 benefits customers care about."
-    cta_line = br.cta or "Get started today."
-    opening = {
-        "Ad": "Attention, innovators!",
-        "Social Post": "Quick update:",
-        "Landing Page": "Welcome—here’s how we help:",
-        "Email": "Hi there,",
-    }.get(br.content_type, "Here’s something useful:")
-    return f"""{opening}
-
-{co.name} presents **{br.topic}** for {br.audience.lower()}.
-Tone: {br.tone}. Length: {br.length.lower()}.
-
-What you’ll get:
-{bullets_md}
-
-Next step: **{cta_line}**
-"""
-
-def make_prompt(br: ContentBrief, co: Company) -> str:
-    bullets = "\n".join([f"- {b}" for b in br.bullets]) if br.bullets else "(no bullets provided)"
+def make_prompt(br: ContentBrief, co: Company, variants: int = 3) -> str:
+    bullets = "\n".join([f"- {b}" for b in br.bullets]) if br.bullets else "(no bullets)"
     return f"""
-Write a {br.length.lower()} {br.content_type.lower()} for platform "{br.platform}".
-Audience: {br.audience}. Tone: {br.tone}.
+Generate {variants} distinct variants (A,B,C) of a {br.length.lower()} {br.content_type.lower()} for platform "{br.platform}".
+Language: {br.language}. Audience: {br.audience}. Tone: {br.tone}.
 Company: {co.name} ({co.industry}, size: {co.size}).
-Topic / Offer: {br.topic}
-
+Topic/Offer: {br.topic}
 Key points:
 {bullets}
-
-Call to action: {br.cta}
-
+Call to action: {br.cta or "(none specified)"}
 Constraints:
-- Be brand-safe and factual from given info only.
-- Strong opening, clear structure, and a crisp CTA.
+- Strong opening, clear structure, crisp CTA.
+- Brand-safe, no false claims, no placeholders like [COMPANY].
+- Keep within reasonable length for the content type.
+Output format:
+## Variant A
+...copy...
+## Variant B
+...copy...
+## Variant C
+...copy...
+""".strip()
+
+
+def llm_variants(prompt: str, temperature: float = 0.65, max_tokens: int = 1200) -> str:
+    if not OPENAI_OK or client is None:
+        raise RuntimeError("OpenAI is not configured.")
+    resp = client.chat.completions.create(
+        model=MODEL,
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ],
+        temperature=temperature,
+        max_tokens=max_tokens,
+    )
+    return resp.choices[0].message.content.strip()
+
+
+def offline_variants(br: ContentBrief, co: Company) -> str:
+    """Fallback when OpenAI not configured."""
+    bullets_md = "\n".join([f"• {b}" for b in br.bullets]) or "• Add 2–3 customer benefits."
+    def one(lead: str):
+        return f"""{lead}
+
+{co.name} — **{br.topic}** ({br.platform})
+Audience: {br.audience} | Tone: {br.tone} | Length: {br.length}
+
+Why it matters:
+{bullets_md}
+
+Next step: **{br.cta or "Get started today."}**
 """
+    return "\n\n".join([
+        "## Variant A\n" + one("Here’s a fast win:"),
+        "## Variant B\n" + one("Quick update:"),
+        "## Variant C\n" + one("Heads-up:"),
+    ])
 
-def add_history(kind: str, payload: dict, output: str):
-    st.session_state.history.insert(0, {"ts": now_iso(), "kind": kind, "input": payload, "output": output})
-    st.session_state.history = st.session_state.history[:15]
 
-# ============ Sidebar ============
+# ---------------- Ensure data exists BEFORE UI ----------------
+ensure_sample_dataset()
 
+# ---------------- Sidebar ----------------
 with st.sidebar:
-    st.subheader("🗂️ Dataset preview")
-    st.caption("Preview the dataset to understand its structure and contents.")
-        # --- App Status ---
-    st.divider()  # or use your divider() helper if you prefer
+    st.subheader("📂 Dataset preview")
+    preview_rows = st.number_input(
+        "Preview rows", min_value=1, max_value=50, value=5, step=1, key="sb_preview_rows"
+    )
+
+    if st.button("Reset sample data", key="btn_reset_sample"):
+        try:
+            if SAMPLE_CSV.exists():
+                SAMPLE_CSV.unlink()
+            ensure_sample_dataset()
+            try:
+                st.cache_data.clear()
+            except Exception:
+                pass
+            try:
+                st.rerun()
+            except AttributeError:
+                st.experimental_rerun()
+        except Exception as e:
+            st.error(f"Reset failed: {e}")
+
+    try:
+        df_preview = load_csv(SAMPLE_CSV, nrows=preview_rows)
+        st.caption(f"Dataset: `{SAMPLE_CSV.name}`")
+        st.dataframe(df_preview, use_container_width=True, height=220)
+    except Exception as e:
+        st.warning(f"Could not load dataset preview: {e}")
+
+    st.divider()
     st.subheader("⚙️ App Status")
-
-    # helpful debug line — remove later if you want
-    st.caption(f"Secrets has OPENAI_API_KEY: {('OPENAI_API_KEY' in st.secrets)}")
-
     if OPENAI_OK:
         st.success("OpenAI: Connected")
     else:
-        st.info("OpenAI: Not configured (offline templates)")
-        st.caption("Add an API key in `.streamlit/secrets.toml` to enable higher-quality AI outputs.")
+        st.info("OpenAI: Not configured (offline mode)")
 
-# Preview row control
-preview_rows = st.number_input(
-    "Preview rows",
-    min_value=1, max_value=50, value=5, step=1,
-    key="sb_preview_rows",
-)
+# ---------------- Header ----------------
+st.title("📢 Presence — PR & Marketing AI Prototype")
+st.caption("Phase 2+3: Dataset tools • Multi-variant generator • Guardrails • Brand checks • Language")
 
-# Reset sample data button
-if st.button("Reset sample data", key="btn_reset_sample"):
-    try:
-        # Remove old CSV if present
-        if SAMPLE_CSV.exists():
-            SAMPLE_CSV.unlink()
-
-        # Recreate the sample CSV
-        ensure_sample_dataset()
-
-        # Clear cached dataframes so the new file is read
-        try:
-            st.cache_data.clear()
-        except Exception:
-            # for very old Streamlit versions where cache API differed
-            pass
-
-        # Rerun the app so the sidebar preview reloads the fresh CSV
-        try:
-            st.rerun()                         # Streamlit >= 1.25
-        except AttributeError:
-            st.experimental_rerun()            # Streamlit < 1.25 (fallback)
-
-    except Exception as e:
-        st.error(f"Reset failed: {e}")
-
-# Load & show preview (cached)
-try:
-    df_preview = load_csv(Path(SAMPLE_CSV), nrows=preview_rows)
-    st.caption(f"Dataset: `{Path(SAMPLE_CSV).name}`")
-    st.dataframe(df_preview, use_container_width=True, height=220)
-except Exception as e:
-    st.warning(f"Could not load dataset preview: {e}")
-
-
-# ============ Header ============
-
-# Ensure the sample CSV exists before we render anything
-ensure_sample_dataset()
-
-st.title("💡 PR & Marketing AI Platform — v1 Prototype")
-st.caption("A focused prototype for strategy ideas and content drafts (press releases, ads, posts, emails, etc.)")
 divider()
-# ============ Section 1 — Company Profile ============
-st.header("1️⃣  Company Profile")
 
+# ---------------- Section 1: Company Profile ----------------
+st.header("1️⃣ Company Profile")
 col1, col2, col3 = st.columns([2, 1.4, 1.2])
 with col1:
     company_name = st.text_input("Company Name", key="cp_name", placeholder="Acme Innovations")
@@ -285,7 +280,7 @@ goals = st.text_area(
     "Business Goals (one or two sentences)",
     key="cp_goals",
     placeholder="Increase qualified demand, accelerate sales cycles, reinforce brand trust…",
-    height=80,
+    height=90,
 )
 
 company = Company(
@@ -297,8 +292,8 @@ company = Company(
 
 divider()
 
-# ============ Section 2 — Strategy Idea ============
-st.header("2️⃣  Quick Strategy Idea")
+# ---------------- Section 2: Strategy Idea (quick) ----------------
+st.header("2️⃣ Quick Strategy Idea")
 if st.button("Generate Strategy Idea", key="btn_idea"):
     base_prompt = f"""
 Propose a practical PR/Marketing initiative for {company.name} ({company.industry}, size: {company.size}).
@@ -306,38 +301,59 @@ Goals: {company.goals or "(not specified)"}.
 Output a brief, 4–6 bullet plan with headline, rationale, primary channel, and success metrics.
 """.strip()
     try:
-        idea = llm_copy(base_prompt, temperature=0.5, max_tokens=350) if OPENAI_OK else (
-            f"""**Campaign Idea: “Momentum Now”**
+        idea = llm_variants(base_prompt, temperature=0.5, max_tokens=350) if OPENAI_OK else (
+            """**Campaign Idea: “Momentum Now”**
 - **Rationale:** Convert in-market demand with fast, helpful education.
-- **Primary channel:** Organic social + email drips; PR angle for thought-leadership.
-- **Tactics:** Rapid Q&A posts, 2 customer mini-stories, founder AMAs, and one simple ROI calculator.
-- **Measurement:** CTR to calculator, demo requests, and 30-day retention of new leads.
-- **Notes:** Align copy tone to {company.size.lower()} buyers in {company.industry.lower()}."""
+- **Primary channel:** Organic social + email; PR angle for thought-leadership.
+- **Tactics:** Rapid Q&A posts, 2 customer mini-stories, founder AMAs, ROI calculator.
+- **Measurement:** CTR to calculator, demo requests, retention of new leads.
+- **Notes:** Align copy tone to segment & channel."""
         )
         st.success("Strategy idea created.")
         st.markdown(idea)
-        add_history("strategy", asdict(company), idea)
+        add_history("strategy", asdict(company), {"idea": idea})
     except Exception as e:
         st.error(str(e))
 
 divider()
 
-# ============ Section 3 — Content Engine ============
-st.header("3️⃣  Content Engine — AI Copy Generator")
+# ---------------- Section 3: Content Engine (A/B/C variants) ----------------
+st.header("3️⃣ Content Engine — AI Copy (A/B/C)")
 
 left, right = st.columns([1, 1])
 with left:
-    content_type = st.selectbox("Content Type", ["Press Release", "Ad", "Social Post", "Landing Page", "Email"], key="ce_type")
-    platform = st.selectbox("Platform (for Social/Ad)", ["Generic", "LinkedIn", "Instagram", "X/Twitter", "YouTube", "Search Ad"], key="ce_platform")
+    content_type = st.selectbox(
+        "Content Type", ["Press Release", "Ad", "Social Post", "Landing Page", "Email"], key="ce_type",
+    )
+    platform = st.selectbox(
+        "Platform (for Social/Ad)",
+        ["Generic", "LinkedIn", "Instagram", "X/Twitter", "YouTube", "Search Ad"],
+        key="ce_platform",
+    )
     topic = st.text_input("Topic / Product / Offer", key="ce_topic", placeholder="Launch of Acme RoboHub 2.0")
-    bullets_raw = st.text_area("Key Points (bullets, one per line)", key="ce_bullets",
-                               placeholder="2× faster setup\nSOC 2 Type II\nSave 30% cost", height=110)
+    bullets_raw = st.text_area(
+        "Key Points (bullets, one per line)",
+        key="ce_bullets",
+        placeholder="2× faster setup\nSOC 2 Type II\nSave 30% cost",
+        height=120,
+    )
+
 with right:
     tone = st.selectbox("Tone", ["Neutral", "Professional", "Friendly", "Bold", "Conversational"], key="ce_tone")
     length = st.selectbox("Length", ["Short", "Medium", "Long"], key="ce_length")
     audience = st.text_input("Audience (who is this for?)", key="ce_audience", placeholder="Decision-makers")
     cta = st.text_input("Call to Action", key="ce_cta", placeholder="Book a demo")
+    language = st.selectbox("Language", ["English", "Hindi", "Gujarati"], index=0, key="ce_lang")
 
+st.markdown("### Brand rules (optional)")
+brand_rules = st.text_area(
+    "Paste brand do's/don'ts or banned words (optional)",
+    key="brand_rules",
+    placeholder="Example: Do use confident tone. Don’t mention competitors. Avoid words: cheap, disrupt, revolutionary.",
+    height=80,
+)
+
+# Build structured brief
 brief = ContentBrief(
     content_type=content_type,
     tone=tone,
@@ -347,45 +363,85 @@ brief = ContentBrief(
     cta=cta,
     topic=topic,
     bullets=bulletize(bullets_raw),
+    language=language,
 )
 
+# Light suggestions
 issues = []
 if not brief.topic.strip():
     issues.append("Add a topic/product name.")
-
+if not brief.bullets:
+    issues.append("Add at least one key point.")
 if issues:
     with st.expander("Suggested fixes"):
         for i in issues:
             st.write("•", i)
 
-if st.button("Generate Content", key="btn_generate", use_container_width=True):
+# --- Generate button ---
+if st.button("Generate A/B/C Variants", key="btn_generate", use_container_width=True):
     # Guardrails
-    throttle(8)
     require_inputs(company.name, brief.topic, brief.bullets)
-    require_secrets_if_online(OPENAI_OK)
+    throttle(7)
+
     try:
+        # Prompt + brand rules injection
+        base_prompt = make_prompt(brief, company, variants=3)
+        if brand_rules.strip():
+            base_prompt += f"\n\nExtra brand constraints:\n{brand_rules.strip()}\n"
+
         if OPENAI_OK:
-            prompt = make_prompt(brief, company)
-            draft = llm_copy(prompt, temperature=0.65, max_tokens=900)
+            raw = llm_variants(base_prompt, temperature=0.65, max_tokens=1100)
         else:
-            draft = offline_press_release(brief, company) if brief.content_type == "Press Release" else offline_generic_copy(brief, company)
+            raw = offline_variants(brief, company)
 
-        st.success("Draft created!")
-        st.markdown(draft)
+        # Try to split into variants by headings
+        parts = []
+        current = []
+        current_title = None
+        for line in raw.splitlines():
+            if line.strip().lower().startswith("## variant"):
+                if current_title is not None:
+                    parts.append((current_title, "\n".join(current).strip()))
+                current_title = line.strip().replace("##", "").strip()
+                current = []
+            else:
+                current.append(line)
+        if current_title is not None:
+            parts.append((current_title, "\n".join(current).strip()))
 
-        add_history("content", {"company": asdict(company), "brief": asdict(brief)}, draft)
+        if not parts:
+            parts = [("Variant A", raw.strip())]
 
-        fname = f"{brief.content_type.replace(' ', '_').lower()}_{datetime.now().strftime('%Y%m%d_%H%M')}.txt"
-        st.download_button("Download .txt", data=draft.encode("utf-8"), file_name=fname, mime="text/plain")
+        st.success("Drafts created!")
+        tabs = st.tabs([title for title, _ in parts])
+        downloads_bundle = []
 
+        for t, (title, body) in zip(tabs, parts):
+            with t:
+                st.markdown(f"#### {title}")
+                st.markdown(body)
+                fname = f"{title.replace(' ', '_').lower()}_{datetime.now().strftime('%Y%m%d_%H%M')}.txt"
+                st.download_button(f"Download {title}", data=body.encode("utf-8"), file_name=fname, mime="text/plain", key=f"dl_{title}")
+                downloads_bundle.append((fname, body))
+
+        # Save to history (store all variants together)
+        add_history(
+            "content_variants",
+            {"company": asdict(company), "brief": asdict(brief), "brand_rules": brand_rules},
+            {"variants": [{"title": t, "text": b} for t, b in parts]},
+        )
+
+        # Small “looks good” hint
         if not issues:
-            st.info("Looks good for a first draft. Tweak tone/CTA and regenerate if needed.")
+            st.info("Looks good for a first pass. Adjust tone/CTA or add brand rules and regenerate if needed.")
+
     except Exception as e:
         st.error(str(e))
 
 divider()
 
-with st.expander("🕘 History (last 15)"):
+# ---------------- History ----------------
+with st.expander("🕘 History (last 20)"):
     if not st.session_state.history:
         st.caption("No items yet.")
     else:
@@ -393,6 +449,14 @@ with st.expander("🕘 History (last 15)"):
             st.markdown(f"**{i}. {item['kind']}** · {item['ts']}")
             with st.expander("View"):
                 st.code(json.dumps(item["input"], indent=2))
-                st.markdown(item["output"])
+                out = item["output"]
+                if isinstance(out, dict) and "variants" in out:
+                    for v in out["variants"]:
+                        st.markdown(f"**{v['title']}**")
+                        st.markdown(v["text"])
+                        st.markdown("---")
+                else:
+                    st.markdown(str(out))
             divider()
+
 
