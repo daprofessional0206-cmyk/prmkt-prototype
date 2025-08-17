@@ -116,6 +116,7 @@ def require_inputs(company: str, topic: str, bullets: List[str]):
         st.warning("Please fix these:\n\n- " + "\n- ".join(problems))
         st.stop()
 
+
         # --- Phase 2: helpers for prompts/variants ---
 LANG_MAP = {
     "English": "English",
@@ -163,6 +164,7 @@ class Company:
     size: str
     goals: str
 
+from typing import List
 
 @dataclass
 class ContentBrief:
@@ -174,7 +176,12 @@ class ContentBrief:
     cta: str
     topic: str
     bullets: List[str]
-    language: str
+    # Phase 2 additions (give safe defaults so older code doesn’t break)
+    language: str = "English"
+    variants: int = 1
+    brand_rules: str = ""
+
+
 
 
 # ---------------- Session: history ----------------
@@ -395,16 +402,21 @@ brand_rules = st.text_area(
     height=100,
 )
 
-# Build brief object
+variants = st.slider("Number of variants", min_value=1, max_value=3, value=3, key="ce_variants")
+
 brief = ContentBrief(
     content_type=content_type,
     tone=tone,
     length=length,
     platform=platform,
-    audience=audience or "Decision-makers",
+    audience=(audience or "Decision-makers"),
     cta=cta,
     topic=topic,
     bullets=bulletize(bullets_raw),
+    # Phase 2 fields (make sure you defined these widgets earlier):
+    language=language,          # e.g., from st.selectbox("Language", ...)
+    variants=variants,          # e.g., from st.slider or number_input (1–3)
+    brand_rules=brand_rules,    # e.g., from st.text_area("Brand rules (optional)")
 )
 
 # Lightweight QA nudges (no blocking)
