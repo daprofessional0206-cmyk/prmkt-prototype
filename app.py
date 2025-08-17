@@ -73,12 +73,6 @@ def throttle(seconds: int = 8):
 
 import streamlit as st # --- App Config (branding & theme) ---
 
-
-
-st.title("📢 PR & Marketing AI Prototype")
-st.caption("Phase 1 Demo – Generate PR copy, marketing content, and track history")
-
-
 # --------- Optional OpenAI (auto-detect via st.secrets) ----------
 OPENAI_OK = False
 MODEL = "gpt-4o-mini"  # fast & inexpensive; change if you prefer
