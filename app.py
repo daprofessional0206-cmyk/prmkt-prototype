@@ -205,37 +205,61 @@ def add_history(kind: str, payload: dict, output: str):
 # ============ Sidebar ============
 
 with st.sidebar:
-    st.subheader("📊 Dataset preview")
-
-    # rows selector
-    nrows = st.number_input(
-        "Preview rows",
-        min_value=1, max_value=50, value=5, step=1,
-        key="sb_preview_rows"
-    )
-
-    cols = st.columns([1, 1])
-    with cols[0]:
-        st.write("")  # spacing
-    with cols[1]:
-        if st.button("Reset sample data", key="sb_reset_sample"):
-            # Rebuild the sample CSV and rerun the app to refresh the table
-            SAMPLE_CSV.unlink(missing_ok=True)
-            ensure_sample_dataset()
-            st.experimental_rerun()
-
-    try:
-        df_preview = load_csv(Path(SAMPLE_CSV), nrows=nrows)
-        st.caption(f"Dataset: `{Path(SAMPLE_CSV).name}`")
-        st.dataframe(df_preview, use_container_width=True, height=220)
-    except Exception as e:
-        st.warning(f"Could not load dataset preview: {e}")
-
+    st.subheader("🗂️ Dataset preview")
+    st.caption("Preview the dataset to understand its structure and contents.")
+        # --- App Status ---
+    st.divider()  # or use your divider() helper if you prefer
     st.subheader("⚙️ App Status")
+
+    # helpful debug line — remove later if you want
+    st.caption(f"Secrets has OPENAI_API_KEY: {('OPENAI_API_KEY' in st.secrets)}")
+
     if OPENAI_OK:
         st.success("OpenAI: Connected")
     else:
         st.info("OpenAI: Not configured (offline templates)")
+        st.caption("Add an API key in `.streamlit/secrets.toml` to enable higher-quality AI outputs.")
+
+# Preview row control
+preview_rows = st.number_input(
+    "Preview rows",
+    min_value=1, max_value=50, value=5, step=1,
+    key="sb_preview_rows",
+)
+
+# Reset sample data button
+if st.button("Reset sample data", key="btn_reset_sample"):
+    try:
+        # Remove old CSV if present
+        if SAMPLE_CSV.exists():
+            SAMPLE_CSV.unlink()
+
+        # Recreate the sample CSV
+        ensure_sample_dataset()
+
+        # Clear cached dataframes so the new file is read
+        try:
+            st.cache_data.clear()
+        except Exception:
+            # for very old Streamlit versions where cache API differed
+            pass
+
+        # Rerun the app so the sidebar preview reloads the fresh CSV
+        try:
+            st.rerun()                         # Streamlit >= 1.25
+        except AttributeError:
+            st.experimental_rerun()            # Streamlit < 1.25 (fallback)
+
+    except Exception as e:
+        st.error(f"Reset failed: {e}")
+
+# Load & show preview (cached)
+try:
+    df_preview = load_csv(Path(SAMPLE_CSV), nrows=preview_rows)
+    st.caption(f"Dataset: `{Path(SAMPLE_CSV).name}`")
+    st.dataframe(df_preview, use_container_width=True, height=220)
+except Exception as e:
+    st.warning(f"Could not load dataset preview: {e}")
 
 
 # ============ Header ============
