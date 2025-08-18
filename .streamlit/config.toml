@@ -3,3 +3,14 @@ base = "dark"
 primaryColor = "#db4b4b"
 secondaryBackgroundColor = "#1c1c1c"
 font = "sans serif"
+
+[theme]
+base = "dark"
+primaryColor = "#F97316"
+backgroundColor = "#0E1117"
+secondaryBackgroundColor = "#11151C"
+textColor = "#E5E7EB"
+font = "sans serif"
+
+[client]
+toolbarMode = "auto"

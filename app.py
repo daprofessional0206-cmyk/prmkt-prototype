@@ -20,6 +20,10 @@ st.set_page_config(
     page_icon="📣",
     layout="wide",
 )
+
+APP_VERSION = "v2.0"
+st.sidebar.caption(f"Build: {APP_VERSION}")
+
 st.markdown(
     """
     <style>
