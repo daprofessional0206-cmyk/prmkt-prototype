@@ -1,6 +1,7 @@
 # shared/state.py — session state bootstrap & accessors
 from __future__ import annotations
 import streamlit as st
+from dataclasses import dataclass
 from .types import Company, ContentBrief
 
 def init():

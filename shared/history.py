@@ -1,37 +1,57 @@
+# shared/history.py
 from __future__ import annotations
-import json
-from datetime import datetime, timezone
-import streamlit as st
 
-def _now() -> str:
+import streamlit as st
+from datetime import datetime, timezone
+from typing import List, Dict, Any, Optional
+
+
+def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-def add(kind: str, payload: dict, output, tags: list[str] | None = None):
-    item = {"ts": _now(), "kind": kind, "input": payload, "output": output, "tags": tags or []}
-    st.session_state.history.insert(0, item)
-    st.session_state.history = st.session_state.history[:20]
 
-def export_json() -> str:
-    return json.dumps(st.session_state.history, ensure_ascii=False, indent=2)
+def get_history() -> List[Dict[str, Any]]:
+    """Return the session history list (create if missing)."""
+    return st.session_state.setdefault("history", [])
 
-def import_json(text: str):
+
+def add_history(
+    kind: str,
+    payload: Dict[str, Any],
+    output: Any,
+    tags: Optional[List[str]] = None,
+) -> None:
+    """
+    Insert an item at the top of history and cap at 20 items.
+    The structure matches what the History page expects.
+    """
+    h = get_history()
+    h.insert(
+        0,
+        {
+            "ts": _now_iso(),
+            "kind": kind,
+            "input": payload,
+            "output": output,
+            "tags": tags or [],
+        },
+    )
+    # keep only last 20
+    del h[20:]
+
+
+# Optional helpers used by the History page (export/import)
+def export_history_json() -> str:
+    import json
+
+    return json.dumps(get_history(), ensure_ascii=False, indent=2)
+
+
+def import_history_json(text: str) -> None:
+    import json
+
     data = json.loads(text)
     if isinstance(data, list):
-        st.session_state.history = data[:20]
+        st.session_state["history"] = data[:20]
     else:
-        raise ValueError("History JSON must be a list")
-
-def filtered():
-    items = st.session_state.history
-    kinds = st.session_state.history_filter_kind or []
-    tags = st.session_state.history_filter_tags or []
-    q = (st.session_state.history_search or "").strip().lower()
-
-    def ok(it):
-        if kinds and it.get("kind") not in kinds: return False
-        if tags and not set(tags).issubset(set(it.get("tags", []))): return False
-        if q:
-            if q not in json.dumps(it, ensure_ascii=False).lower(): return False
-        return True
-
-    return [it for it in items if ok(it)]
+        raise ValueError("History JSON must be a list.")
