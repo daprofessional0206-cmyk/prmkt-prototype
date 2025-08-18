@@ -424,97 +424,116 @@ if st.button("Generate Variants (A/B/C)", key="btn_generate_variants", use_conta
 
 divider()
 
-# ============= 4) History (filters + tags + import/export) =============
+# ================== History (safe + full controls) ==================
 with st.expander("🕘 History (last 20)", expanded=False):
-    # Filters row
-    col_kind, col_tags, col_search = st.columns([1.2, 1.6, 1.2])
 
-    kinds_available = sorted({it.get("kind", "") for it in st.session_state.history} - {""}) or ["strategy", "Variants"]
-    with col_kind:
-        selected_kinds = st.multiselect(
-            "Filter by type",
-            options=kinds_available,
-            default=st.session_state.history_filter_kind or kinds_available,
-            key="hist_kind",
-        )
-        st.session_state.history_filter_kind = selected_kinds
+    hist = st.session_state.get("history", [])
 
-    all_tags = collect_all_tags(st.session_state.history)
-    with col_tags:
-        selected_tags = st.multiselect(
-            "Filter by tag(s)",
-            options=all_tags,
-            default=st.session_state.history_filter_tags,
-            key="hist_tags",
-        )
-        st.session_state.history_filter_tags = selected_tags
+    # --- Controls row: Export / Clear / Import ---
+    c1, c2, c3 = st.columns([1, 1, 2.2])
 
-    with col_search:
-        search_text = st.text_input("Search text", value=st.session_state.history_search, key="hist_search")
-        st.session_state.history_search = search_text.strip()
-
-    # Export / Clear / Import row
-    cA, cB, cC = st.columns([0.9, 0.9, 2])
-    with cA:
-        if st.download_button(
-            "Export history (.json)",
+    with c1:
+        # Export works even if empty (exports "[]")
+        st.download_button(
+            label="Export history (.json)",
             data=export_history_json().encode("utf-8"),
-            file_name=f"presence_history_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+            file_name="history.json",
             mime="application/json",
-            key="btn_export_history",
-        ):
-            pass
-    with cB:
-        if st.button("🗑️ Clear history", key="btn_clear_history"):
-            st.session_state.history = []
+            key="hist_export_btn",
+            help="Download your history as a JSON file.",
+        )
+
+    with c2:
+        # Disable Clear when nothing to clear
+        cleared = st.button(
+            "🗑️ Clear history",
+            key="hist_clear_btn",
+            disabled=(len(hist) == 0),
+            help="Remove all items from history.",
+        )
+        if cleared:
+            st.session_state["history"] = []
+            st.success("History cleared.")
             st.rerun()
-    with cC:
-        st.caption("Import history (.json)")
-        up = st.file_uploader("Drag and drop file here", type=["json"], key="hist_uploader")
+
+    with c3:
+        up = st.file_uploader(
+            "Import history (.json)",
+            type=["json"],
+            accept_multiple_files=False,
+            key="hist_import_upl",
+            help="Import a JSON file you previously exported.",
+        )
         if up is not None:
             try:
-                import_history_json(up.read().decode("utf-8"))
+                txt = up.getvalue().decode("utf-8")
+                import_history_json(txt)   # uses your helper
                 st.success("History imported.")
                 st.rerun()
             except Exception as e:
-                st.error(f"Import failed: {e}")
+                st.error(f"Could not import JSON: {e}")
 
-    # Apply filters
-    items = st.session_state.history
-    if selected_kinds:
-        items = [it for it in items if it.get("kind") in selected_kinds]
-    if selected_tags:
-        items = [it for it in items if any(t in it.get("tags", []) for t in selected_tags)]
-    if search_text:
-        q = search_text.lower()
-        def match(it: Dict[str, Any]) -> bool:
-            hay = json.dumps(it, ensure_ascii=False).lower()
-            return q in hay
-        items = [it for it in items if match(it)]
+    # If empty, still show a friendly message and stop *after* buttons are rendered
+    if not hist:
+        st.caption("No items yet. Generate something or import a history JSON above.")
+        st.stop()
 
-    st.caption(f"Showing {len(items)} of {len(st.session_state.history)} item(s).")
-    divider()
+    # --- Safe filter options based on actual data ---
+    kind_options = sorted({item.get("kind", "Unknown") for item in hist})
+    prev_kinds = st.session_state.get("history_filter_kind", ["Variants"])
+    default_kinds = [k for k in prev_kinds if k in kind_options]
 
-    if not items:
-        st.caption("No items yet.")
-    else:
-        for i, item in enumerate(items, start=1):
-            kind = item.get("kind", "?")
-            ts = item.get("ts", "")
-            tags_str = "".join([f"<span class='tagchip'>{t}</span>" for t in item.get("tags", [])])
-            st.markdown(f"**{i}. {kind}** · {ts}  {tags_str}", unsafe_allow_html=True)
+    selected_kinds = st.multiselect(
+        "Filter by type",
+        options=kind_options,
+        default=default_kinds,
+        key="hist_kind",
+        help="Filter by record type (e.g., Variants, Strategy, etc.)",
+    )
 
-            with st.expander("Open"):
-                st.markdown("**Input**")
-                st.code(json.dumps(item.get("input", {}), indent=2, ensure_ascii=False))
-                st.markdown("**Output**")
-                out = item.get("output")
-                if isinstance(out, list):
-                    for j, d in enumerate(out, start=1):
-                        st.markdown(f"**Variant {j}**")
-                        st.markdown(d)
-                        st.markdown("---")
-                else:
-                    st.markdown(out if out else "_(empty)_")
+    all_tags = sorted({t for item in hist for t in item.get("tags", [])})
+    prev_tags = st.session_state.get("history_filter_tags", [])
+    default_tags = [t for t in prev_tags if t in all_tags]
 
-            divider()
+    selected_tags = st.multiselect(
+        "Filter by tag(s)",
+        options=all_tags,
+        default=default_tags,
+        key="hist_tags",
+    )
+
+    search_text = st.text_input(
+        "Search text",
+        value=st.session_state.get("history_search", ""),
+        key="hist_search",
+    )
+
+    # --- Apply filters ---
+    def match(item) -> bool:
+        ok_kind = (not selected_kinds) or (item.get("kind") in selected_kinds)
+        ok_tags = (not selected_tags) or any(t in item.get("tags", []) for t in selected_tags)
+        ok_text = (not search_text) or (
+            search_text.lower() in str(item.get("input", "")).lower()
+            or search_text.lower() in str(item.get("output", "")).lower()
+        )
+        return ok_kind and ok_tags and ok_text
+
+    filtered = [it for it in hist if match(it)]
+    st.write(f"Showing {len(filtered)} of {len(hist)} item(s).")
+    st.divider()
+
+    # --- Render items ---
+    for i, item in enumerate(filtered, start=1):
+        st.markdown(f"**{i}. {item.get('kind','?')}** · {item.get('ts','')}")
+        with st.expander("Open"):
+            st.code(json.dumps(item.get("input", {}), indent=2))
+            out = item.get("output", "")
+            if isinstance(out, list):
+                for idx, chunk in enumerate(out, start=1):
+                    st.markdown(f"**Variant {idx}**")
+                    st.markdown(chunk)
+                    st.divider()
+            else:
+                st.markdown(out)
+
+            st.divider()
