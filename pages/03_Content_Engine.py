@@ -31,6 +31,12 @@ def bulletize(text: str) -> List[str]:
     lines = [ln.strip("•- \t") for ln in text.splitlines() if ln.strip()]
     return lines[:15]
 
+# --- Safe access for Company dataclass/object ---
+def safe_company_fields(company):
+    name = getattr(company, "name", "(Company)")
+    industry = getattr(company, "industry", "Industry")
+    size = getattr(company, "size", "Mid-market")
+    return name, industry, size
 
 def make_prompt(
     content_type: str,
