@@ -4,7 +4,9 @@ from __future__ import annotations
 import streamlit as st
 from typing import List
 
-from shared.state import get_company, add_history
+from shared.state import get_company
+from shared.history import add_history
+
 try:
     from shared.llm import OPENAI_OK, llm_copy, make_prompt, offline_generic_copy, offline_press_release
 except Exception:

@@ -1,47 +1,34 @@
-# shared/state.py — session state bootstrap & accessors
+# shared/state.py
 from __future__ import annotations
+
 import streamlit as st
-from dataclasses import dataclass
-from .types import Company, ContentBrief
+from dataclasses import dataclass, asdict
 
-def init():
-    if "company" not in st.session_state:
-        st.session_state.company = Company(
-            name="Acme Innovations",
-            industry="Technology",
-            size="Mid-market",
-            goals="Increase qualified demand, accelerate sales cycles, reinforce brand trust."
-        )
-    if "brand_rules" not in st.session_state:
-        st.session_state.brand_rules = ""
-    if "history" not in st.session_state:
-        st.session_state.history = []
-    st.session_state.setdefault("history_filter_kind", ["Variants"])
-    st.session_state.setdefault("history_filter_tags", [])
-    st.session_state.setdefault("history_search", "")
-    st.session_state.setdefault("content_brief", ContentBrief.defaults())
 
-# company
+@dataclass
+class Company:
+    name: str = "Acme Innovations"
+    industry: str = "Technology"
+    size: str = "Mid-market"
+    goals: str = ""
+
+
+def init() -> None:
+    """Ensure base state keys exist once per session."""
+    st.session_state.setdefault("company", Company())
+    st.session_state.setdefault("brand_rules", "")
+    # you can add more defaults here if needed
+
+
 def get_company() -> Company:
-    return st.session_state.company
+    init()
+    return st.session_state["company"]
 
-def set_company(c: Company) -> None:
-    st.session_state.company = c
 
-# brand rules
-def get_brand_rules() -> str:
-    return st.session_state.brand_rules
+def set_company(co: Company) -> None:
+    st.session_state["company"] = co
 
-def set_brand_rules(text: str) -> None:
-    st.session_state.brand_rules = text
 
-# content brief
-def get_brief() -> ContentBrief:
-    return st.session_state.content_brief
-
-def set_brief(b: ContentBrief) -> None:
-    st.session_state.content_brief = b
-
-# history (simple pass-through — richer utils in shared/history.py)
-def get_history() -> list[dict]:
-    return st.session_state.history
+def get_company_dict() -> dict:
+    """Convenience for saving to history, if needed."""
+    return asdict(get_company())
