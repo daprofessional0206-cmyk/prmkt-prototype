@@ -138,11 +138,18 @@ if st.button("Generate Variants (A/B/C)", key="btn_generate_variants_pg", use_co
 
         # Save to history with tags
         add_history(
-            kind="Variants",
-            payload={"brief": brief.__dict__, "company": co.__dict__},
-            output=outputs,
-            tags=[brief.content_type, brief.language],
-        )
+    kind="Variants",
+    payload={                     # keep this small; it will show in Insights
+        "language": brief.language,
+        "content_type": brief.content_type,
+        "platform": brief.platform,
+        "topic": brief.topic,
+        "variants": brief.variants
+    },
+    output=outputs,               # list[str]
+    tags=["content", brief.language, brief.content_type]
+)
+
 
         st.success("Draft(s) created!")
         for idx, draft in enumerate(outputs, start=1):

@@ -4,6 +4,8 @@ import streamlit as st
 from shared import state, ui
 from shared.history import add as add_history
 from shared.llm import llm_copy, is_openai_ready
+from dataclasses import asdict
+from shared.history import add_history  # or: from shared.history import add as add_history
 
 state.init()
 ui.title("Strategy Ideas")
@@ -20,6 +22,11 @@ Output a brief, 4–6 bullet plan with headline, rationale, primary channel, and
         )
         st.success("Idea generated.")
         st.markdown(idea)
-        add_history("Strategy", co.asdict(), idea, tags=["Strategy"])
+        add_history(
+    kind="strategy",
+    payload=asdict(co),         # co is your Company dataclass instance
+    output=idea,                # the generated idea text
+    tags=["strategy"]           # optional tags (helps filtering later)
+)
     except Exception as e:
         st.error(str(e))
