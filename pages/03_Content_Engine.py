@@ -5,6 +5,14 @@ import streamlit as st
 from datetime import datetime
 from typing import List
 
+# --- Safe access for Company dataclass/object ---
+def safe_company_fields(company):
+    """Return (name, industry, size) with safe defaults even if attributes are missing."""
+    name = getattr(company, "name", "(Company)")
+    industry = getattr(company, "industry", "Industry")
+    size = getattr(company, "size", "Mid-market")
+    return name, industry, size
+
 # Internal helpers (existing modules in your repo)
 from shared.state import get_company, get_brand_rules
 from shared.history import add as add_history
@@ -25,30 +33,30 @@ def bulletize(text: str) -> List[str]:
 
 
 def make_prompt(
-    *,
     content_type: str,
-    platform: str,
-    topic: str,
-    bullets: List[str],
     tone: str,
     length: str,
+    platform: str,
     audience: str,
     cta: str,
+    topic: str,
+    bullets: list[str],
     language: str,
-    variants: int,
     brand_rules: str,
-    company: dict,
+    variants: int,
+    company,  # Company object, not a dict
 ) -> str:
+    co_name, co_industry, co_size = safe_company_fields(company)
+
     bullets_md = "\n".join([f"- {b}" for b in bullets]) if bullets else "(no bullets provided)"
-    rules = brand_rules.strip() or "(none provided)"
+    rules = (brand_rules or "").strip() or "(none provided)"
+
     return f"""
-Generate {variants} distinct variant(s) of a {length.lower()} {content_type.lower()} for platform "{platform}".
+Generate {variants} distinct variant(s) of a {length.lower()} {content_type.lower()}.
 
-Language: {language}
-Audience: {audience}
-Tone: {tone}
-
-Company: {company.get('name','(Company)')} ({company.get('industry','Industry')}, size: {company.get('size','Size')})
+Language: {language}.
+Audience: {audience}. Tone: {tone}.
+Company: {co_name} ({co_industry}, size: {co_size}).
 Topic / Offer: {topic}
 
 Key points:
@@ -63,8 +71,8 @@ Constraints:
 - Brand-safe, factual from provided info only.
 - Strong opening, clear structure, crisp CTA.
 - If multiple variants are requested, make them clearly different.
-Return ONLY the copy. Separate each variant with a line containing: -- on its own line.
 """.strip()
+
 
 
 def offline_fallback(
