@@ -2,169 +2,257 @@
 from __future__ import annotations
 
 import streamlit as st
+from datetime import datetime
 from typing import List
 
-from shared.state import get_company
-from shared.history import add_history
-
+# Internal helpers (existing modules in your repo)
+from shared.state import get_company, get_brand_rules
+from shared.history import add as add_history
+# LLM gateway: we import safely; if unavailable, we'll fall back to offline
 try:
-    from shared.llm import OPENAI_OK, llm_copy, make_prompt, offline_generic_copy, offline_press_release
+    from shared.llm import generate as llm_generate, is_online as llm_is_online
 except Exception:
-    # Fallbacks for environments where shared.lmp is not available (prevents import errors)
-    OPENAI_OK = False
+    llm_generate = None
+    llm_is_online = lambda: False  # noqa: E731
 
-    def make_prompt(brief, co):
-        bullets = "\n".join(brief.bullets) if getattr(brief, "bullets", None) else ""
-        return f"{brief.content_type}\nTopic: {brief.topic}\n{bullets}\nCTA: {brief.cta}"
 
-    def llm_copy(prompt, temperature=0.65, max_tokens=1200):
-        # Minimal deterministic placeholder for LLM output
-        return f"Placeholder generated content for prompt:\n\n{prompt}"
+# ─────────────────────────────────────────────────────────────
+# Small local utils (kept here to avoid extra imports)
+# ─────────────────────────────────────────────────────────────
+def bulletize(text: str) -> List[str]:
+    lines = [ln.strip("•- \t") for ln in text.splitlines() if ln.strip()]
+    return lines[:15]
 
-    def offline_generic_copy(brief, co):
-        bullets = "\n".join(f"- {b}" for b in (brief.bullets or []))
-        return f"{brief.content_type}\n\nTopic: {brief.topic}\n\n{bullets}\n\nCTA: {brief.cta}"
 
-    def offline_press_release(brief, co):
-        # Simple press release fallback
-        bullets = "\n".join(f"- {b}" for b in (brief.bullets or []))
-        return (
-            f"Press Release: {brief.topic}\n\n"
-            f"{brief.content_type}\n\n"
-            f"{bullets}\n\n"
-            f"Call to Action: {brief.cta}"
-        )
+def make_prompt(
+    *,
+    content_type: str,
+    platform: str,
+    topic: str,
+    bullets: List[str],
+    tone: str,
+    length: str,
+    audience: str,
+    cta: str,
+    language: str,
+    variants: int,
+    brand_rules: str,
+    company: dict,
+) -> str:
+    bullets_md = "\n".join([f"- {b}" for b in bullets]) if bullets else "(no bullets provided)"
+    rules = brand_rules.strip() or "(none provided)"
+    return f"""
+Generate {variants} distinct variant(s) of a {length.lower()} {content_type.lower()} for platform "{platform}".
 
-from shared.types import ContentBrief
+Language: {language}
+Audience: {audience}
+Tone: {tone}
 
-st.set_page_config(page_title="Content Engine — A/B/C", page_icon="🧩", layout="wide")
+Company: {company.get('name','(Company)')} ({company.get('industry','Industry')}, size: {company.get('size','Size')})
+Topic / Offer: {topic}
 
-st.header("Content Engine — A/B/C")
+Key points:
+{bullets_md}
 
-# --- Company context (readonly) ---
-co = get_company()
-with st.expander("Company context (from Profile)", expanded=False):
-    st.write(co.__dict__)
+Call to action: {cta}
 
-# --- Brief form ---
-left, right = st.columns([1, 1])
+Brand rules (follow & avoid banned words):
+{rules}
+
+Constraints:
+- Brand-safe, factual from provided info only.
+- Strong opening, clear structure, crisp CTA.
+- If multiple variants are requested, make them clearly different.
+Return ONLY the copy. Separate each variant with a line containing: -- on its own line.
+""".strip()
+
+
+def offline_fallback(
+    *,
+    content_type: str,
+    topic: str,
+    bullets: List[str],
+    tone: str,
+    length: str,
+    audience: str,
+    cta: str,
+    language: str,
+    variants: int,
+    company: dict,
+) -> List[str]:
+    """Simple local generator used when no API key is configured."""
+    bullets_md = "\n".join([f"• {b}" for b in bullets]) if bullets else "• Add 2–3 benefits your buyer cares about."
+    opening = {
+        "Ad": "Attention, innovators!",
+        "Social Post": "Quick update:",
+        "Landing Page": "Welcome — here’s how we help:",
+        "Email": "Hi there,",
+        "Press Release": "FOR IMMEDIATE RELEASE",
+    }.get(content_type, "Here’s something useful:")
+
+    base = f"""{opening}
+
+{company.get('name','Your brand')} presents **{topic}** for {audience.lower() if audience else 'your audience'}.
+Tone: {tone}. Length: {length.lower()}. Language: {language}.
+
+What you’ll get:
+{bullets_md}
+
+Next step: **{cta or 'Get started today.'}**
+"""
+    # create N lightly varied variants
+    outs = []
+    for i in range(variants):
+        suffix = "" if i == 0 else f"\n\n(Perspective {i+1}: tweaks in phrasing and emphasis.)"
+        outs.append(base + suffix)
+    return outs
+
+
+# ─────────────────────────────────────────────────────────────
+# UI
+# ─────────────────────────────────────────────────────────────
+st.title("🧠 Content Engine — AI Copy (A/B/C)")
+st.caption("Create on-brand copy for PR/marketing. Supports brand rules, languages, and up to 3 variants.")
+st.divider()
+
+company = get_company()  # dict with name/industry/size/goals
+brand_rules = get_brand_rules()  # string (may be "")
+
+left, right = st.columns([1, 1], vertical_alignment="top")
 
 with left:
     content_type = st.selectbox(
         "Content Type",
         ["Press Release", "Ad", "Social Post", "Landing Page", "Email"],
-        key="ce_type_pg",
+        key="ce_type",
     )
     platform = st.selectbox(
         "Platform (for Social/Ad)",
         ["Generic", "LinkedIn", "Instagram", "X/Twitter", "YouTube", "Search Ad"],
-        key="ce_platform_pg",
+        key="ce_platform",
     )
-    topic = st.text_input("Topic / Product / Offer", value="Launch of Acme RoboHub 2.0", key="ce_topic_pg")
+    topic = st.text_input("Topic / Product / Offer", value="Launch of Acme RoboHub 2.0", key="ce_topic")
     bullets_raw = st.text_area(
         "Key Points (bullets, one per line)",
         value="2× faster setup\nSOC 2 Type II\nSave 30% cost",
         height=120,
-        key="ce_bullets_pg",
+        key="ce_bullets",
     )
 
 with right:
-    tone = st.selectbox("Tone", ["Neutral", "Professional", "Friendly", "Bold", "Conversational"], key="ce_tone_pg")
-    length = st.selectbox("Length", ["Short", "Medium", "Long"], key="ce_length_pg")
-    audience = st.text_input("Audience (who is this for?)", value="Decision-makers", key="ce_audience_pg")
-    cta = st.text_input("Call to Action", value="Book a demo", key="ce_cta_pg")
+    tone = st.selectbox("Tone", ["Neutral", "Professional", "Friendly", "Bold", "Conversational"], key="ce_tone")
+    length = st.selectbox("Length", ["Short", "Medium", "Long"], key="ce_length")
+    audience = st.text_input("Audience (who is this for?)", value="Decision-makers", key="ce_audience")
+    cta = st.text_input("Call to Action", value="Book a demo", key="ce_cta")
 
-st.subheader("Brand rules (optional)")
-brand_rules = st.text_area(
-    "Paste brand do’s/don’ts or banned words (optional)",
-    value="Avoid superlatives like 'best-ever'. Use 'customers' not 'clients'.",
-    height=110,
-    key="ce_brand_rules_pg",
-)
+st.subheader("Brand Rules (read-only)")
+st.caption("Edit brand rules on the Company Profile page. These rules are applied here automatically.")
+with st.expander("View current brand rules", expanded=False):
+    st.code(brand_rules or "(none)", language="markdown")
 
 col_lang, col_var = st.columns([2, 1])
 with col_lang:
-    language = st.selectbox("Language", ["English", "Spanish", "French", "German", "Hindi", "Japanese"], index=0, key="ce_language_pg")
+    language = st.selectbox("Language", ["English", "Spanish", "French", "German", "Hindi", "Japanese"], index=0, key="ce_language")
 with col_var:
-    variants = st.number_input("Variants (A/B/C)", min_value=1, max_value=3, value=1, step=1, key="ce_variants_pg")
+    variants = st.number_input("Variants (A/B/C)", min_value=1, max_value=3, value=1, step=1, key="ce_variants")
 
-def bulletize(text: str) -> List[str]:
-    return [ln.strip("•- \t") for ln in text.splitlines() if ln.strip()][:15]
+bullets = bulletize(bullets_raw)
 
-brief = ContentBrief(
-    content_type=content_type,
-    tone=tone,
-    length=length,
-    platform=platform,
-    audience=audience or "Decision-makers",
-    cta=cta,
-    topic=topic,
-    bullets=bulletize(bullets_raw),
-    language=language,
-    variants=int(variants),
-    brand_rules=brand_rules or "",
-)
-
+# Hints (non-blocking)
 issues = []
-if not brief.topic.strip():
-    issues.append("Add a topic/product name.")
+if not topic.strip():
+    issues.append("Add a topic / product name.")
+if len(bullets) == 0:
+    issues.append("Add at least one bullet point (one per line).")
 if issues:
     with st.expander("Suggested fixes"):
         for i in issues:
             st.write("•", i)
 
-# --- Generate button ---
-if st.button("Generate Variants (A/B/C)", key="btn_generate_variants_pg", use_container_width=True):
-    if not brief.topic.strip():
-        st.warning("Please enter a topic / offer first.")
+# Generate
+if st.button("Generate A/B/C Variants", key="btn_generate_variants", use_container_width=True):
+    if not topic.strip() or len(bullets) == 0:
+        st.warning("Please fill Topic and at least one bullet point.")
         st.stop()
 
+    prompt = make_prompt(
+        content_type=content_type,
+        platform=platform,
+        topic=topic,
+        bullets=bullets,
+        tone=tone,
+        length=length,
+        audience=audience,
+        cta=cta,
+        language=language,
+        variants=int(variants),
+        brand_rules=brand_rules or "",
+        company=company,
+    )
+
     try:
-        outputs: List[str] = []
-        if OPENAI_OK:
-            raw = llm_copy(make_prompt(brief, co), temperature=0.65, max_tokens=1200)
-            chunks = [seg.strip() for seg in raw.split("\n\n--\n\n") if seg.strip()]
-            while len(chunks) < brief.variants:
+        if llm_is_online():
+            raw = llm_generate(prompt, temperature=0.65, max_tokens=1200)
+            # split on lines that contain only --
+            chunks = [seg.strip() for seg in raw.split("\n--\n") if seg.strip()]
+            if not chunks:
+                chunks = [raw.strip()]
+            while len(chunks) < int(variants):
                 chunks.append(chunks[-1])
-            outputs = chunks[:brief.variants]
+            outputs = chunks[: int(variants)]
         else:
-            # Simple offline templates
-            if brief.content_type == "Press Release":
-                outputs = [offline_press_release(brief, co)]
-            else:
-                outputs = [offline_generic_copy(brief, co)]
-            while len(outputs) < brief.variants:
-                outputs.append(outputs[-1])
+            outputs = offline_fallback(
+                content_type=content_type,
+                topic=topic,
+                bullets=bullets,
+                tone=tone,
+                length=length,
+                audience=audience,
+                cta=cta,
+                language=language,
+                variants=int(variants),
+                company=company,
+            )
 
-        # Save to history with tags
+        # Save to History (compatible with shared.history.add)
+        meta = {
+            "company": company,  # keep as dict to avoid asdict() errors
+            "brief": {
+                "content_type": content_type,
+                "tone": tone,
+                "length": length,
+                "platform": platform,
+                "audience": audience,
+                "cta": cta,
+                "topic": topic,
+                "bullets": bullets,
+                "language": language,
+                "variants": int(variants),
+                "brand_rules_used": bool(brand_rules),
+            },
+            "tags": ["content", content_type, platform, language],
+        }
         add_history(
-    kind="Variants",
-    payload={                     # keep this small; it will show in Insights
-        "language": brief.language,
-        "content_type": brief.content_type,
-        "platform": brief.platform,
-        "topic": brief.topic,
-        "variants": brief.variants
-    },
-    output=outputs,               # list[str]
-    tags=["content", brief.language, brief.content_type]
-)
-
+            kind="content",
+            payload=meta,
+            output=outputs if len(outputs) > 1 else outputs[0],
+        )
 
         st.success("Draft(s) created!")
+
+        # Show outputs + downloads
         for idx, draft in enumerate(outputs, start=1):
-            st.markdown(f"### Variant {idx}")
+            st.markdown(f"#### Variant {idx}")
             st.markdown(draft)
+            fname = f"variant_{idx}_{content_type.replace(' ', '_').lower()}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
             st.download_button(
                 label=f"Download Variant {idx} (.txt)",
                 data=draft.encode("utf-8"),
-                file_name=f"variant_{idx}_{brief.content_type.replace(' ', '_').lower()}.txt",
+                file_name=fname,
                 mime="text/plain",
-                key=f"btn_dl_pg_{idx}",
-                use_container_width=True,
+                key=f"btn_dl_{idx}",
             )
             st.divider()
 
     except Exception as e:
         st.error(f"Error while generating: {e}")
-
