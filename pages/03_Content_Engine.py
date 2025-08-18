@@ -2,10 +2,31 @@
 from __future__ import annotations
 
 import streamlit as st
-from datetime import datetime
-from typing import List
 
-# --- Safe access for Company dataclass/object ---
+# Shared modules in your repo
+from shared import state
+from shared.history import add as add_history
+
+# LLM: works online (OpenAI) or offline fallback
+try:
+    from shared.llm import llm_copy, OPENAI_OK  # your helper (Phase 2)
+except Exception:
+    OPENAI_OK = False
+
+    def llm_copy(prompt: str, temperature: float = 0.6, max_tokens: int = 900) -> str:
+        # very simple offline stub
+        return (
+            "Draft:\n"
+            "• Opening line tailored to the audience.\n"
+            "• Benefit/feature #1\n"
+            "• Benefit/feature #2\n"
+            "• Clear CTA.\n"
+        )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Safe helpers for Company object (avoid dict .get errors)
+# ─────────────────────────────────────────────────────────────────────────────
 def safe_company_fields(company):
     """Return (name, industry, size) with safe defaults even if attributes are missing."""
     name = getattr(company, "name", "(Company)")
@@ -13,32 +34,18 @@ def safe_company_fields(company):
     size = getattr(company, "size", "Mid-market")
     return name, industry, size
 
-# Internal helpers (existing modules in your repo)
-from shared.state import get_company, get_brand_rules
-from shared.history import add as add_history
-# LLM gateway: we import safely; if unavailable, we'll fall back to offline
-try:
-    from shared.llm import generate as llm_generate, is_online as llm_is_online
-except Exception:
-    llm_generate = None
-    llm_is_online = lambda: False  # noqa: E731
+
+def company_log_dict(company):
+    """Stable dict for history/logging."""
+    n, i, s = safe_company_fields(company)
+    return {"name": n, "industry": i, "size": s}
 
 
-# ─────────────────────────────────────────────────────────────
-# Small local utils (kept here to avoid extra imports)
-# ─────────────────────────────────────────────────────────────
-def bulletize(text: str) -> List[str]:
-    lines = [ln.strip("•- \t") for ln in text.splitlines() if ln.strip()]
-    return lines[:15]
-
-# --- Safe access for Company dataclass/object ---
-def safe_company_fields(company):
-    name = getattr(company, "name", "(Company)")
-    industry = getattr(company, "industry", "Industry")
-    size = getattr(company, "size", "Mid-market")
-    return name, industry, size
-
+# ─────────────────────────────────────────────────────────────────────────────
+# Prompt builder (never uses company.get)
+# ─────────────────────────────────────────────────────────────────────────────
 def make_prompt(
+    *,
     content_type: str,
     tone: str,
     length: str,
@@ -50,7 +57,7 @@ def make_prompt(
     language: str,
     brand_rules: str,
     variants: int,
-    company,  # Company object, not a dict
+    company,
 ) -> str:
     co_name, co_industry, co_size = safe_company_fields(company)
 
@@ -58,11 +65,17 @@ def make_prompt(
     rules = (brand_rules or "").strip() or "(none provided)"
 
     return f"""
+You are an expert PR & Marketing copywriter.
+Write clear, compelling, brand-safe copy. Keep facts generic unless provided.
+Match the requested tone, audience, and length. If brand rules are provided, follow them and avoid banned words.
+Return only the copy (no preface).
+
 Generate {variants} distinct variant(s) of a {length.lower()} {content_type.lower()}.
 
 Language: {language}.
 Audience: {audience}. Tone: {tone}.
 Company: {co_name} ({co_industry}, size: {co_size}).
+Platform: {platform}.
 Topic / Offer: {topic}
 
 Key points:
@@ -74,199 +87,134 @@ Brand rules (follow & avoid banned words):
 {rules}
 
 Constraints:
-- Brand-safe, factual from provided info only.
+- Brand-safe, factual only from provided info.
 - Strong opening, clear structure, crisp CTA.
 - If multiple variants are requested, make them clearly different.
+- Separate each variant with a line containing exactly: ---VARIANT---
 """.strip()
 
 
-
-def offline_fallback(
-    *,
-    content_type: str,
-    topic: str,
-    bullets: List[str],
-    tone: str,
-    length: str,
-    audience: str,
-    cta: str,
-    language: str,
-    variants: int,
-    company: dict,
-) -> List[str]:
-    """Simple local generator used when no API key is configured."""
-    bullets_md = "\n".join([f"• {b}" for b in bullets]) if bullets else "• Add 2–3 benefits your buyer cares about."
-    opening = {
-        "Ad": "Attention, innovators!",
-        "Social Post": "Quick update:",
-        "Landing Page": "Welcome — here’s how we help:",
-        "Email": "Hi there,",
-        "Press Release": "FOR IMMEDIATE RELEASE",
-    }.get(content_type, "Here’s something useful:")
-
-    base = f"""{opening}
-
-{company.get('name','Your brand')} presents **{topic}** for {audience.lower() if audience else 'your audience'}.
-Tone: {tone}. Length: {length.lower()}. Language: {language}.
-
-What you’ll get:
-{bullets_md}
-
-Next step: **{cta or 'Get started today.'}**
-"""
-    # create N lightly varied variants
-    outs = []
-    for i in range(variants):
-        suffix = "" if i == 0 else f"\n\n(Perspective {i+1}: tweaks in phrasing and emphasis.)"
-        outs.append(base + suffix)
-    return outs
-
-
-# ─────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
 # UI
-# ─────────────────────────────────────────────────────────────
-st.title("🧠 Content Engine — AI Copy (A/B/C)")
-st.caption("Create on-brand copy for PR/marketing. Supports brand rules, languages, and up to 3 variants.")
-st.divider()
+# ─────────────────────────────────────────────────────────────────────────────
+st.title("Content Engine — A/B/C")
 
-company = get_company()  # dict with name/industry/size/goals
-brand_rules = get_brand_rules()  # string (may be "")
+# Read current company + brand rules from shared.state
+company = state.get_company()  # object with attributes
+brand_rules = state.get_brand_rules()  # plain string (read-only here)
 
-left, right = st.columns([1, 1], vertical_alignment="top")
+with st.expander("🧩 Brand Rules (read‑only)"):
+    st.caption("Edit brand rules on the **Company Profile** page. They are applied automatically here.")
+    st.code(brand_rules or "(none set)")
+
+# Left/right column inputs
+left, right = st.columns(2)
 
 with left:
     content_type = st.selectbox(
         "Content Type",
         ["Press Release", "Ad", "Social Post", "Landing Page", "Email"],
-        key="ce_type",
+        index=0,
     )
     platform = st.selectbox(
         "Platform (for Social/Ad)",
         ["Generic", "LinkedIn", "Instagram", "X/Twitter", "YouTube", "Search Ad"],
-        key="ce_platform",
+        index=0,
     )
-    topic = st.text_input("Topic / Product / Offer", value="Launch of Acme RoboHub 2.0", key="ce_topic")
+    topic = st.text_input("Topic / Product / Offer", value="Launch of Acme RoboHub 2.0")
     bullets_raw = st.text_area(
         "Key Points (bullets, one per line)",
         value="2× faster setup\nSOC 2 Type II\nSave 30% cost",
         height=120,
-        key="ce_bullets",
     )
 
 with right:
-    tone = st.selectbox("Tone", ["Neutral", "Professional", "Friendly", "Bold", "Conversational"], key="ce_tone")
-    length = st.selectbox("Length", ["Short", "Medium", "Long"], key="ce_length")
-    audience = st.text_input("Audience (who is this for?)", value="Decision-makers", key="ce_audience")
-    cta = st.text_input("Call to Action", value="Book a demo", key="ce_cta")
+    tone = st.selectbox("Tone", ["Neutral", "Professional", "Friendly", "Bold", "Conversational"], index=0)
+    length = st.selectbox("Length", ["Short", "Medium", "Long"], index=0)
+    audience = st.text_input("Audience (who is this for?)", value="Decision-makers")
+    cta = st.text_input("Call to Action", value="Book a demo")
 
-st.subheader("Brand Rules (read-only)")
-st.caption("Edit brand rules on the Company Profile page. These rules are applied here automatically.")
-with st.expander("View current brand rules", expanded=False):
-    st.code(brand_rules or "(none)", language="markdown")
-
-col_lang, col_var = st.columns([2, 1])
-with col_lang:
-    language = st.selectbox("Language", ["English", "Spanish", "French", "German", "Hindi", "Japanese"], index=0, key="ce_language")
-with col_var:
-    variants = st.number_input("Variants (A/B/C)", min_value=1, max_value=3, value=1, step=1, key="ce_variants")
-
-bullets = bulletize(bullets_raw)
-
-# Hints (non-blocking)
-issues = []
-if not topic.strip():
-    issues.append("Add a topic / product name.")
-if len(bullets) == 0:
-    issues.append("Add at least one bullet point (one per line).")
-if issues:
-    with st.expander("Suggested fixes"):
-        for i in issues:
-            st.write("•", i)
-
-# Generate
-if st.button("Generate A/B/C Variants", key="btn_generate_variants", use_container_width=True):
-    if not topic.strip() or len(bullets) == 0:
-        st.warning("Please fill Topic and at least one bullet point.")
-        st.stop()
-
-    prompt = make_prompt(
-        content_type=content_type,
-        platform=platform,
-        topic=topic,
-        bullets=bullets,
-        tone=tone,
-        length=length,
-        audience=audience,
-        cta=cta,
-        language=language,
-        variants=int(variants),
-        brand_rules=brand_rules or "",
-        company=company,
+# Language + variants
+c1, c2 = st.columns([2, 1])
+with c1:
+    language = st.selectbox(
+        "Language",
+        ["English", "Spanish", "French", "German", "Hindi", "Japanese"],
+        index=0,
     )
+with c2:
+    variants = st.number_input("Variants (A/B/C)", min_value=1, max_value=3, value=1, step=1)
 
-    try:
-        if llm_is_online():
-            raw = llm_generate(prompt, temperature=0.65, max_tokens=1200)
-            # split on lines that contain only --
-            chunks = [seg.strip() for seg in raw.split("\n--\n") if seg.strip()]
-            if not chunks:
-                chunks = [raw.strip()]
-            while len(chunks) < int(variants):
-                chunks.append(chunks[-1])
-            outputs = chunks[: int(variants)]
-        else:
-            outputs = offline_fallback(
+# Build bullets list
+bullets = [ln.strip("•- \t") for ln in bullets_raw.splitlines() if ln.strip()]
+bullets = bullets[:15]
+
+# Generate button
+if st.button("Generate A/B/C Variants", use_container_width=True, key="btn_ce_generate"):
+    if not topic.strip():
+        st.warning("Please enter a topic / offer first.")
+    else:
+        try:
+            prompt = make_prompt(
                 content_type=content_type,
-                topic=topic,
-                bullets=bullets,
                 tone=tone,
                 length=length,
+                platform=platform,
                 audience=audience,
                 cta=cta,
+                topic=topic,
+                bullets=bullets,
                 language=language,
+                brand_rules=brand_rules or "",
                 variants=int(variants),
                 company=company,
             )
 
-        # Save to History (compatible with shared.history.add)
-        meta = {
-            "company": company,  # keep as dict to avoid asdict() errors
-            "brief": {
-                "content_type": content_type,
-                "tone": tone,
-                "length": length,
-                "platform": platform,
-                "audience": audience,
-                "cta": cta,
-                "topic": topic,
-                "bullets": bullets,
-                "language": language,
-                "variants": int(variants),
-                "brand_rules_used": bool(brand_rules),
-            },
-            "tags": ["content", content_type, platform, language],
-        }
-        add_history(
-            kind="content",
-            payload=meta,
-            output=outputs if len(outputs) > 1 else outputs[0],
-        )
+            # Call the LLM once; ask it to separate variants with ---VARIANT---
+            raw = llm_copy(prompt, temperature=0.65, max_tokens=1200)
+            chunks = [seg.strip() for seg in raw.split("---VARIANT---") if seg.strip()]
 
-        st.success("Draft(s) created!")
+            # If LLM didn't separate clearly, just duplicate the first block
+            while len(chunks) < int(variants):
+                chunks.append(chunks[-1])
 
-        # Show outputs + downloads
-        for idx, draft in enumerate(outputs, start=1):
-            st.markdown(f"#### Variant {idx}")
-            st.markdown(draft)
-            fname = f"variant_{idx}_{content_type.replace(' ', '_').lower()}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-            st.download_button(
-                label=f"Download Variant {idx} (.txt)",
-                data=draft.encode("utf-8"),
-                file_name=fname,
-                mime="text/plain",
-                key=f"btn_dl_{idx}",
+            outputs = chunks[: int(variants)]
+
+            st.success("Draft(s) created!")
+            # Display + download
+            for idx, draft in enumerate(outputs, start=1):
+                st.markdown(f"### Variant {idx}")
+                st.markdown(draft)
+                fname = f"variant_{idx}_{content_type.replace(' ', '_').lower()}.txt"
+                st.download_button(
+                    label=f"Download Variant {idx} (.txt)",
+                    data=draft.encode("utf-8"),
+                    file_name=fname,
+                    mime="text/plain",
+                    key=f"btn_dl_ce_{idx}",
+                )
+                st.divider()
+
+            # Save to history (safe dict + useful tags)
+            add_history(
+                kind="Variants",
+                payload={
+                    "company": company_log_dict(company),
+                    "content_type": content_type,
+                    "tone": tone,
+                    "length": length,
+                    "platform": platform,
+                    "audience": audience,
+                    "cta": cta,
+                    "topic": topic,
+                    "bullets": bullets,
+                    "language": language,
+                    "brand_rules": brand_rules or "",
+                    "variants": int(variants),
+                },
+                output=outputs,
+                tags=[content_type, language, safe_company_fields(company)[1]],  # industry as tag
             )
-            st.divider()
 
-    except Exception as e:
-        st.error(f"Error while generating: {e}")
+        except Exception as e:
+            st.error(f"Error while generating: {e!s}")
