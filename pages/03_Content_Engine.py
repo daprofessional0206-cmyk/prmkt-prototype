@@ -9,9 +9,10 @@ from shared.history import add as add_history
 
 # LLM: works online (OpenAI) or offline fallback
 try:
-    from shared.llm import llm_copy, OPENAI_OK  # your helper (Phase 2)
+    from shared.llm import llm_copy, is_openai_ready  # your helper (Phase 2)
 except Exception:
-    OPENAI_OK = False
+    # Provide fallback equivalents: is_openai_ready must be callable and llm_copy a simple stub
+    is_openai_ready = lambda: False
 
     def llm_copy(prompt: str, temperature: float = 0.6, max_tokens: int = 900) -> str:
         # very simple offline stub
@@ -22,6 +23,8 @@ except Exception:
             "• Benefit/feature #2\n"
             "• Clear CTA.\n"
         )
+
+st.caption(f"OpenAI: {'Connected' if is_openai_ready() else 'Not configured'}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
