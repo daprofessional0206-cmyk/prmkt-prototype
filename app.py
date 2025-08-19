@@ -1,84 +1,49 @@
-# app.py — Presence (v2.0 Prototype)
+# app.py — Presence (Phase 3.2 Home)
+
 from __future__ import annotations
-
-# ============= Streamlit must be first =============
-import streamlit as st
-
-# ============= Std libs =============
 import json
-from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
-from typing import List, Optional, Dict, Any
 from pathlib import Path
 
-# ============= Data =============
 import pandas as pd
+import streamlit as st
 
-# ========= App config & small CSS polish =========
+# Local shared modules (created earlier)
+from shared import state, history
+
+# ──────────────────────────────────────────────────────────────────────────────
+# App config + light CSS
+# ──────────────────────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="Presence — PR & Marketing AI (v2 Prototype)",
+    page_title="Presence — PR & Marketing OS (Prototype)",
     page_icon="📣",
     layout="wide",
 )
 
-APP_VERSION = "v2.0"
-st.sidebar.caption(f"Build: {APP_VERSION}")
-
 st.markdown(
     """
     <style>
-      .block-container { padding-top: 0.8rem; padding-bottom: 2.2rem; }
-      .stTextArea textarea { font-size: 0.96rem; line-height: 1.46; }
+      .block-container { padding-top: 1.0rem; padding-bottom: 2.2rem; }
+      .stTextArea textarea { font-size: 0.95rem; line-height: 1.45; }
       .stDownloadButton button { width: 100%; }
-      .stSelectbox, .stNumberInput, .stTextInput { font-size: 0.98rem; }
-      .tagchip {
-        display:inline-block; background:#223; color:#9ad;
-        padding:2px 8px; margin:0 4px 4px 0; border-radius:12px;
-        font-size:12px; border:1px solid #334;
-      }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-# ============= Helpers =============
 def divider() -> None:
-    st.markdown("<hr style='border: 1px solid #202431; margin: 1.0rem 0;'/>", unsafe_allow_html=True)
+    st.markdown("<hr style='border:1px solid #202431; margin: 1rem 0;'/>", unsafe_allow_html=True)
 
-def bulletize(text: str) -> List[str]:
-    lines = [ln.strip("•- \t") for ln in text.splitlines() if ln.strip()]
-    return lines[:15]
-
-def now_iso() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-def export_history_json() -> str:
-    return json.dumps(st.session_state.get("history", []), ensure_ascii=False, indent=2)
-
-def import_history_json(text: str) -> None:
-    data = json.loads(text)
-    if not isinstance(data, list):
-        raise ValueError("History JSON must be a list.")
-    # keep max 20; normalize structure
-    st.session_state["history"] = data[:20]
-
-def collect_all_tags(items: List[Dict[str, Any]]) -> List[str]:
-    bag = set()
-    for it in items:
-        for t in it.get("tags", []):
-            bag.add(t)
-    return sorted(bag)
-
-# ============= Phase 2 — dataset utils (preview/reset) =============
+# ──────────────────────────────────────────────────────────────────────────────
+# Sample dataset (optional mini-preview in sidebar)
+# ──────────────────────────────────────────────────────────────────────────────
 DATA_DIR = Path(__file__).parent / "data"
 SAMPLE_CSV = DATA_DIR / "sample_dataset.csv"
 
 @st.cache_data(show_spinner=False)
 def load_csv(path: Path, nrows: int | None = None) -> pd.DataFrame:
     df = pd.read_csv(path)
-    if nrows:
-        df = df.head(nrows)
-    return df
+    return df.head(nrows) if nrows else df
 
 def ensure_sample_dataset() -> None:
     DATA_DIR.mkdir(exist_ok=True)
@@ -92,448 +57,94 @@ def ensure_sample_dataset() -> None:
 
 ensure_sample_dataset()
 
-# ============= Optional OpenAI client (safe/offline) =============
-OPENAI_OK = False
-client = None
-MODEL = "gpt-4o-mini"
-
-if "OPENAI_API_KEY" in st.secrets and st.secrets["OPENAI_API_KEY"]:
-    try:
-        from openai import OpenAI
-        client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
-        OPENAI_OK = True
-    except Exception:
-        OPENAI_OK = False
-
-# ============= Data classes =============
-@dataclass
-class Company:
-    name: str
-    industry: str
-    size: str
-    goals: str
-
-@dataclass
-class ContentBrief:
-    content_type: str
-    tone: str
-    length: str
-    platform: str
-    audience: str
-    cta: str
-    topic: str
-    bullets: List[str]
-    language: str = "English"
-    variants: int = 1
-    brand_rules: str = ""
-
-# ============= Session state =============
-if "history" not in st.session_state:
-    st.session_state["history"] = []
-if "history_filter_kind" not in st.session_state:
-    st.session_state["history_filter_kind"] = ["Variants"]
-if "history_filter_tags" not in st.session_state:
-    st.session_state["history_filter_tags"] = []
-if "history_search" not in st.session_state:
-    st.session_state["history_search"] = ""
-
-def add_history(kind: str, payload: dict, output: Any, tags: Optional[List[str]] = None):
-    item = {
-        "ts": now_iso(),
-        "kind": kind,              # e.g., "strategy", "Variants"
-        "tags": tags or [],        # user tags
-        "input": payload,          # saved input payload
-        "output": output,          # text or list[str]
-    }
-    st.session_state.history.insert(0, item)
-    st.session_state.history = st.session_state.history[:20]
-
-# ============= LLM prompt/generators =============
-SYSTEM_PROMPT = """You are an expert PR & Marketing copywriter.
-Write clear, compelling, brand-safe copy. Use only provided facts.
-Match tone, audience, length; follow brand rules; use requested language.
-Return only the copy, no preface or commentary.
-"""
-
-def make_prompt(br: ContentBrief, co: Company) -> str:
-    bullets = "\n".join([f"- {b}" for b in br.bullets]) if br.bullets else "(no bullets provided)"
-    rules = br.brand_rules.strip() or "(none provided)"
-    return f"""
-Generate {br.variants} distinct variant(s) of a {br.length.lower()} {br.content_type.lower()}.
-
-Language: {br.language}.
-Audience: {br.audience}. Tone: {br.tone}.
-Company: {co.name} ({co.industry}, size: {co.size}).
-Topic / Offer: {br.topic}
-
-Key points:
-{bullets}
-
-Call to action: {br.cta}
-
-Brand rules (follow & avoid banned words):
-{rules}
-
-Constraints:
-- Brand-safe, factual from provided info only.
-- Strong opening, clear structure, crisp CTA.
-- If multiple variants are requested, make them clearly different.
-"""
-
-def llm_copy(prompt: str, temperature: float = 0.6, max_tokens: int = 900) -> str:
-    if not OPENAI_OK or client is None:
-        raise RuntimeError("OpenAI is not configured.")
-    resp = client.chat.completions.create(
-        model=MODEL,
-        messages=[{"role": "system", "content": SYSTEM_PROMPT},
-                  {"role": "user", "content": prompt}],
-        temperature=temperature,
-        max_tokens=max_tokens,
-    )
-    return (resp.choices[0].message.content or "").strip()
-
-def offline_press_release(br: ContentBrief, co: Company) -> str:
-    bullets_md = "\n".join([f"- {b}" for b in br.bullets]) if br.bullets else "- Add 2–3 benefits"
-    cta_line = br.cta or "Contact us to learn more."
-    return f"""FOR IMMEDIATE RELEASE
-
-{co.name} Announces {br.topic}
-
-[City, Date] – {co.name} introduces {br.topic} for {br.audience.lower()} in {co.industry.lower()}.
-Key points:
-{bullets_md}
-
-This {br.length.lower()} release follows tone “{br.tone}” and brand guidance where provided.
-
-{cta_line}
-"""
-
-def offline_generic_copy(br: ContentBrief, co: Company) -> str:
-    bullets_md = "\n".join([f"• {b}" for b in br.bullets]) if br.bullets else "• Add key benefits"
-    cta_line = br.cta or "Get started today."
-    opening = {
-        "Ad": "Attention, innovators!",
-        "Social Post": "Quick update:",
-        "Landing Page": "Welcome—here’s how we help:",
-        "Email": "Hi there,",
-        "Press Release": "FOR IMMEDIATE RELEASE",
-    }.get(br.content_type, "Here’s something useful:")
-    return f"""{opening}
-
-{co.name} presents **{br.topic}** for {br.audience.lower()}.
-Tone: {br.tone}. Length: {br.length.lower()}. Language: {br.language}.
-
-What you’ll get:
-{bullets_md}
-
-Next step: **{cta_line}**
-"""
-
-# ============= Sidebar: dataset preview & app status =============
+# ──────────────────────────────────────────────────────────────────────────────
+# Sidebar: status + dataset preview
+# ──────────────────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.subheader("📁 Dataset preview")
-    st.caption("Preview the sample dataset used in Phase 2.")
+    st.subheader("⚙️ App Status")
+    st.caption("Presence — multi-page prototype (Phase 3.2)")
 
-    preview_rows = st.number_input(
-        "Preview rows", min_value=1, max_value=50, value=5, step=1, key="sb_preview_rows"
-    )
+    # Secrets / API status
+    if state.has_openai():
+        st.success("OpenAI: Connected")
+    else:
+        st.info("OpenAI: Offline (using templates)")
 
-    if st.button("Start over (reset sample data)", key="btn_reset_sample"):
-        if SAMPLE_CSV.exists():
-            SAMPLE_CSV.unlink()
-        ensure_sample_dataset()
-        st.rerun()
+    divider()
 
-    st.caption(f"Dataset: `sample_dataset.csv`")
+    st.subheader("📁 Sample Data Preview")
+    rows = st.number_input("Preview rows", 1, 20, 5, key="sb_preview_rows")
+    st.caption(f"Dataset: `{SAMPLE_CSV.name}`")
     try:
-        df_preview = load_csv(SAMPLE_CSV, nrows=int(preview_rows))
-        st.dataframe(df_preview, use_container_width=True)
+        st.dataframe(load_csv(SAMPLE_CSV, nrows=int(rows)), use_container_width=True)
+        if st.button("Reset sample data", key="btn_reset_sample"):
+            if SAMPLE_CSV.exists():
+                SAMPLE_CSV.unlink()
+            ensure_sample_dataset()
+            st.rerun()
     except Exception as e:
         st.warning(f"Could not load dataset preview: {e!s}")
 
     divider()
-    st.subheader("🔧 App Status")
-    if OPENAI_OK:
-        st.success("OpenAI: Connected")
-    else:
-        st.info("OpenAI: Not configured (offline templates)")
+    st.caption("Use the navigation in the left sidebar to open pages.")
 
-# ============= Header =============
-st.title("💡 Presence — PR & Marketing AI (v2 Prototype)")
-st.caption("Strategy ideas, multi-variant content drafts, brand rules, language, and history with filters/tagging.")
-divider()
+# ──────────────────────────────────────────────────────────────────────────────
+# Home content
+# ──────────────────────────────────────────────────────────────────────────────
+st.title("📣 Presence — PR & Marketing OS (Prototype)")
+st.caption("Phase 3.2 · Multi-page UI ready: Company Profile, Strategy Ideas, Content Engine, Optimizer Tests, History & Insights")
 
-# ============= 1) Company Profile =============
-st.header("1️⃣  Company Profile")
-c1, c2, c3 = st.columns([2, 1.4, 1.2])
-with c1:
-    company_name = st.text_input("Company Name", value="Acme Innovations", key="cp_name")
-with c2:
-    industry = st.text_input("Industry / Sector", value="Robotics, Fintech, Retail…", key="cp_industry")
-with c3:
-    size = st.selectbox("Company Size", ["Small", "Mid-market", "Enterprise"], index=1, key="cp_size")
-goals = st.text_area(
-    "Business Goals (one or two sentences)",
-    value="Increase qualified demand, accelerate sales cycles, reinforce brand trust…",
-    height=90,
-    key="cp_goals",
+company = state.get_company()
+st.success(
+    f"Active company: **{company.get('name','(set in Company Profile)')}** · "
+    f"{company.get('industry','—')} · {company.get('size','—')}"
 )
-company = Company(
-    name=company_name or "Acme Innovations",
-    industry=industry or "Technology",
-    size=size,
-    goals=goals,
-)
-divider()
-
-# ============= 2) Quick Strategy Idea =============
-st.header("2️⃣  Quick Strategy Idea")
-if st.button("Generate Strategy Idea", key="btn_idea"):
-    prompt = f"""
-Propose a practical PR/Marketing initiative for {company.name} ({company.industry}, size: {company.size}).
-Goals: {company.goals or "(not specified)"}.
-Output a brief, 4–6 bullet plan with headline, rationale, primary channel, and success metrics.
-""".strip()
-    try:
-        idea = llm_copy(prompt, temperature=0.5, max_tokens=350) if OPENAI_OK else (
-            f"""**Campaign Idea: “Momentum Now”**
-- **Rationale:** Convert in-market demand with fast, helpful education.
-- **Primary channel:** Organic social + email drips; PR angle for thought-leadership.
-- **Tactics:** Rapid Q&A posts, 2 customer mini-stories, founder AMAs, and one simple ROI calculator.
-- **Measurement:** CTR to calculator, demo requests, and 30-day retention of new leads.
-- **Notes:** Align tone to {company.size.lower()} buyers in {company.industry.lower()}."""
-        )
-        st.success("Strategy idea created.")
-        st.markdown(idea)
-        add_history("strategy", asdict(company), idea, tags=["strategy"])
-    except Exception as e:
-        st.error(str(e))
-divider()
-
-# ============= 3) Content Engine — AI Copy (A/B/C) =============
-st.header("3️⃣  Content Engine — AI Copy (A/B/C)")
-
-left, right = st.columns([1, 1])
-with left:
-    content_type = st.selectbox(
-        "Content Type",
-        ["Press Release", "Ad", "Social Post", "Landing Page", "Email"],
-        key="ce_type",
-    )
-    platform = st.selectbox(
-        "Platform (for Social/Ad)",
-        ["Generic", "LinkedIn", "Instagram", "X/Twitter", "YouTube", "Search Ad"],
-        key="ce_platform",
-    )
-    topic = st.text_input("Topic / Product / Offer", value="Launch of Acme RoboHub 2.0", key="ce_topic")
-    bullets_raw = st.text_area(
-        "Key Points (bullets, one per line)",
-        value="2× faster setup\nSOC 2 Type II\nSave 30% cost",
-        height=110,
-        key="ce_bullets",
-    )
-with right:
-    tone = st.selectbox("Tone", ["Neutral", "Professional", "Friendly", "Bold", "Conversational"], key="ce_tone")
-    length = st.selectbox("Length", ["Short", "Medium", "Long"], key="ce_length")
-    audience = st.text_input("Audience (who is this for?)", value="Decision-makers", key="ce_audience")
-    cta = st.text_input("Call to Action", value="Book a demo", key="ce_cta")
-
-st.subheader("Brand rules (optional)")
-brand_rules = st.text_area(
-    "Paste brand do’s/don’ts or banned words (optional)",
-    value="Avoid superlatives like 'best-ever'. Use 'customers' not 'clients'.",
-    height=105,
-    key="ce_brand_rules",
-)
-
-col_lang, col_var = st.columns([2, 1])
-with col_lang:
-    language = st.selectbox(
-        "Language",
-        ["English", "Spanish", "French", "German", "Hindi", "Japanese"],
-        index=0,
-        key="ce_language",
-    )
-with col_var:
-    variants = st.number_input("Variants (A/B/C)", min_value=1, max_value=3, value=1, step=1, key="ce_variants")
-
-brief = ContentBrief(
-    content_type=content_type,
-    tone=tone,
-    length=length,
-    platform=platform,
-    audience=audience or "Decision-makers",
-    cta=cta,
-    topic=topic,
-    bullets=bulletize(bullets_raw),
-    language=language,
-    variants=int(variants),
-    brand_rules=brand_rules or "",
-)
-
-issues = []
-if not brief.topic.strip():
-    issues.append("Add a topic/product name.")
-if issues:
-    with st.expander("Suggested fixes"):
-        for i in issues:
-            st.write("•", i)
-
-# --- Generate button (unique key) ---
-if st.button("Generate Variants (A/B/C)", key="btn_generate_variants", use_container_width=True):
-    if not brief.topic.strip():
-        st.warning("Please enter a topic / offer first.")
-    else:
-        try:
-            outputs: List[str] = []
-            if OPENAI_OK:
-                raw = llm_copy(make_prompt(brief, company), temperature=0.65, max_tokens=1200)
-                chunks = [seg.strip() for seg in raw.split("\n\n--\n\n") if seg.strip()]
-                while len(chunks) < brief.variants:
-                    chunks.append(chunks[-1])
-                outputs = chunks[:brief.variants]
-            else:
-                # Offline templates
-                if brief.content_type == "Press Release":
-                    base = offline_press_release(brief, company)
-                else:
-                    base = offline_generic_copy(brief, company)
-                outputs = [base for _ in range(brief.variants)]
-
-            # Save to History (6.3) with auto tags
-            auto_tags = [brief.content_type, brief.language]
-            add_history("Variants", asdict(brief), outputs, tags=auto_tags)
-
-            st.success("Draft(s) created!")
-
-            # Show outputs + downloads (6.4)
-            for idx, draft in enumerate(outputs, start=1):
-                st.markdown(f"### Variant {idx}")
-                st.markdown(draft)
-                fname = f"variant_{idx}_{brief.content_type.replace(' ', '_').lower()}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-                st.download_button(
-                    label=f"Download Variant {idx} (.txt)",
-                    data=draft.encode("utf-8"),
-                    file_name=fname,
-                    mime="text/plain",
-                    key=f"btn_dl_{idx}",
-                )
-                divider()
-        except Exception as e:
-            st.error(f"Error while generating: {e}")
+if state.get_brand_rules().strip():
+    st.caption("Brand rules loaded ✅")
+else:
+    st.caption("Tip: add brand rules in **Company Profile** so all tools align to your voice.")
 
 divider()
 
-# ================== History (safe + full controls) ==================
-with st.expander("🕘 History (last 20)", expanded=False):
+col1, col2, col3 = st.columns(3)
+with col1:
+    st.header("🏢 Company Profile")
+    st.write("Set your **name**, **industry**, **size**, **goals**, and **brand rules** once; all tools use them.")
+    st.page_link("pages/01_Company_Profile.py", label="Open Company Profile →", icon="🏢")
 
-    hist = st.session_state.get("history", [])
+with col2:
+    st.header("💡 Strategy Ideas")
+    st.write("Brainstorm **campaign angles** & **PR ideas**. Generates multiple variants fast.")
+    st.page_link("pages/02_Strategy_Ideas.py", label="Open Strategy Ideas →", icon="💡")
 
-    # --- Controls row: Export / Clear / Import ---
-    c1, c2, c3 = st.columns([1, 1, 2.2])
+with col3:
+    st.header("📝 Content Engine")
+    st.write("Create **press releases, ads, posts, landing pages** with brand-safe copy.")
+    st.page_link("pages/03_Content_Engine.py", label="Open Content Engine →", icon="📝")
 
-    with c1:
-        # Export works even if empty (exports "[]")
-        st.download_button(
-            label="Export history (.json)",
-            data=export_history_json().encode("utf-8"),
-            file_name="history.json",
-            mime="application/json",
-            key="hist_export_btn",
-            help="Download your history as a JSON file.",
-        )
+divider()
 
-    with c2:
-        # Disable Clear when nothing to clear
-        cleared = st.button(
-            "🗑️ Clear history",
-            key="hist_clear_btn",
-            disabled=(len(hist) == 0),
-            help="Remove all items from history.",
-        )
-        if cleared:
-            st.session_state["history"] = []
-            st.success("History cleared.")
-            st.rerun()
+col4, col5 = st.columns(2)
+with col4:
+    st.header("🧪 Optimizer Tests")
+    st.write("Run **A/B/C** style variations by tone, length, CTA and compare quickly.")
+    st.page_link("pages/04_Optimizer_Tests.py", label="Open Optimizer Tests →", icon="🧪")
 
-    with c3:
-        up = st.file_uploader(
-            "Import history (.json)",
-            type=["json"],
-            accept_multiple_files=False,
-            key="hist_import_upl",
-            help="Import a JSON file you previously exported.",
-        )
-        if up is not None:
-            try:
-                txt = up.getvalue().decode("utf-8")
-                import_history_json(txt)   # uses your helper
-                st.success("History imported.")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Could not import JSON: {e}")
+with col5:
+    st.header("📊 History & Insights")
+    st.write("Filter/search **everything generated**. Export or clear in one click.")
+    st.page_link("pages/05_History_Insights.py", label="Open History & Insights →", icon="📊")
 
-    # If empty, still show a friendly message and stop *after* buttons are rendered
-    if not hist:
-        st.caption("No items yet. Generate something or import a history JSON above.")
-        st.stop()
+divider()
 
-    # --- Safe filter options based on actual data ---
-    kind_options = sorted({item.get("kind", "Unknown") for item in hist})
-    prev_kinds = st.session_state.get("history_filter_kind", ["Variants"])
-    default_kinds = [k for k in prev_kinds if k in kind_options]
-
-    selected_kinds = st.multiselect(
-        "Filter by type",
-        options=kind_options,
-        default=default_kinds,
-        key="hist_kind",
-        help="Filter by record type (e.g., Variants, Strategy, etc.)",
-    )
-
-    all_tags = sorted({t for item in hist for t in item.get("tags", [])})
-    prev_tags = st.session_state.get("history_filter_tags", [])
-    default_tags = [t for t in prev_tags if t in all_tags]
-
-    selected_tags = st.multiselect(
-        "Filter by tag(s)",
-        options=all_tags,
-        default=default_tags,
-        key="hist_tags",
-    )
-
-    search_text = st.text_input(
-        "Search text",
-        value=st.session_state.get("history_search", ""),
-        key="hist_search",
-    )
-
-    # --- Apply filters ---
-    def match(item) -> bool:
-        ok_kind = (not selected_kinds) or (item.get("kind") in selected_kinds)
-        ok_tags = (not selected_tags) or any(t in item.get("tags", []) for t in selected_tags)
-        ok_text = (not search_text) or (
-            search_text.lower() in str(item.get("input", "")).lower()
-            or search_text.lower() in str(item.get("output", "")).lower()
-        )
-        return ok_kind and ok_tags and ok_text
-
-    filtered = [it for it in hist if match(it)]
-    st.write(f"Showing {len(filtered)} of {len(hist)} item(s).")
-    st.divider()
-
-    # --- Render items ---
-    for i, item in enumerate(filtered, start=1):
-        st.markdown(f"**{i}. {item.get('kind','?')}** · {item.get('ts','')}")
-        with st.expander("Open"):
-            st.code(json.dumps(item.get("input", {}), indent=2))
-            out = item.get("output", "")
-            if isinstance(out, list):
-                for idx, chunk in enumerate(out, start=1):
-                    st.markdown(f"**Variant {idx}**")
-                    st.markdown(chunk)
-                    st.divider()
-            else:
-                st.markdown(out)
-
-            st.divider()
+st.subheader("Recent activity")
+items = history.get_history()
+if not items:
+    st.caption("No history yet. Generate content or strategies to see them here.")
+else:
+    for it in items[:5]:
+        st.markdown(f"**{it['kind']}** — {it['ts']}")
+        if it.get("tags"):
+            st.caption(", ".join(it["tags"]))
+        st.json(it["input"])
+        st.divider()
