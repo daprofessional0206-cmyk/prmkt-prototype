@@ -1,95 +1,95 @@
 # shared/history.py
 from __future__ import annotations
 
-import streamlit as st
-from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
+from datetime import datetime, timezone
 import json
+import re
+import streamlit as st
 
 
-def _now_iso() -> str:
+MAX_ITEMS = 200  # keep history light but useful
+
+
+def _init() -> None:
+    if "history" not in st.session_state or not isinstance(st.session_state["history"], list):
+        st.session_state["history"] = []
+
+
+def now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def get_history() -> List[Dict[str, Any]]:
-    """Return the session history list (create if missing)."""
-    return st.session_state.setdefault("history", [])
+    _init()
+    return st.session_state["history"]
 
 
-def add_history(
-    kind: str,
-    payload: Dict[str, Any],
-    output: Any,
-    tags: Optional[List[str]] = None,
-) -> None:
-    """
-    Insert an item at the top of history and cap at 20 items.
-    Structure matches what the History page expects.
-    """
-    h = get_history()
-    h.insert(
-        0,
-        {
-            "ts": _now_iso(),
-            "kind": kind,
-            "input": payload,
-            "output": output,
-            "tags": tags or [],
-        },
-    )
-    del h[20:]  # keep last 20
+def add(kind: str, payload: Dict[str, Any], output: Any, tags: Optional[List[str]] = None) -> None:
+    """Append an item to history."""
+    _init()
+    item = {
+        "ts": now_iso(),
+        "kind": kind,                     # e.g., "Strategy", "Content", "Optimizer"
+        "tags": tags or [],               # e.g., ["content","Press Release"]
+        "input": payload,                 # arbitrary dict
+        "output": output,                 # str or list[str]
+    }
+    st.session_state["history"].insert(0, item)
+    st.session_state["history"] = st.session_state["history"][:MAX_ITEMS]
 
 
-def export_history_json() -> str:
-    return json.dumps(get_history(), ensure_ascii=False, indent=2)
+def clear() -> None:
+    _init()
+    st.session_state["history"] = []
 
 
-def import_history_json(text: str) -> None:
+def export_json() -> str:
+    _init()
+    return json.dumps(st.session_state["history"], ensure_ascii=False, indent=2)
+
+
+def import_json(text: str) -> None:
+    """Replace history with a provided JSON array."""
     data = json.loads(text)
-    if isinstance(data, list):
-        st.session_state["history"] = data[:20]
-    else:
-        raise ValueError("History JSON must be a list.")
+    if not isinstance(data, list):
+        raise ValueError("Imported JSON must be a list.")
+    st.session_state["history"] = data[:MAX_ITEMS]
 
 
-def filter_history(
+def _contains_text(obj: Any, needle: str) -> bool:
+    """Recursive text search for filtering."""
+    n = needle.lower()
+    if obj is None:
+        return False
+    if isinstance(obj, (str, int, float, bool)):
+        return n in str(obj).lower()
+    if isinstance(obj, list):
+        return any(_contains_text(x, needle) for x in obj)
+    if isinstance(obj, dict):
+        return any(_contains_text(v, needle) for v in obj.values())
+    return False
+
+
+def filtered(
     kinds: Optional[List[str]] = None,
     tags: Optional[List[str]] = None,
-    search: str = "",
+    q: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    """
-    Small utility that filters current history in-memory:
-      - kinds: list of kind names to include (e.g., ["Variants","strategy"])
-      - tags:  items must include ALL provided tags
-      - search: case-insensitive substring match across input/output
-    """
-    items = get_history()
+    """Filter history by kinds, tags and free text query."""
+    _init()
+    items = st.session_state["history"]
+
     if kinds:
-        kinds_set = {k.lower() for k in kinds}
-        items = [it for it in items if it.get("kind", "").lower() in kinds_set]
+        setk = set(kinds)
+        items = [it for it in items if str(it.get("kind")) in setk]
+
     if tags:
-        tags_set = {t.lower() for t in tags}
-        items = [
-            it
-            for it in items
-            if tags_set.issubset({t.lower() for t in it.get("tags", [])})
-        ]
-    if search:
-        s = search.lower()
-        def blob(x: Any) -> str:
-            try:
-                return json.dumps(x, ensure_ascii=False).lower()
-            except Exception:
-                return str(x).lower()
-        items = [
-            it for it in items
-            if s in blob(it.get("output")) or s in blob(it.get("input"))
-        ]
+        sett = set(tags)
+        items = [it for it in items if sett.intersection(set(it.get("tags", [])))]
+
+    if q and q.strip():
+        query = q.strip()
+        items = [it for it in items if _contains_text(it, query)]
+
     return items
-
-
-# ── Backward-compatibility aliases (so old imports keep working) ─────────────
-add = add_history
-export_json = export_history_json
-import_json = import_history_json
-filtered = filter_history

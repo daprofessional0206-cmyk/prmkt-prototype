@@ -1,56 +1,64 @@
 # shared/state.py
 from __future__ import annotations
 
-import streamlit as st
 from dataclasses import dataclass, asdict
+from typing import Dict, Any, Optional
+from datetime import datetime
+import time
+import streamlit as st
 
-# ---- Company model ----
+
+# -----------------------------
+# Company & Brand state helpers
+# -----------------------------
+
 @dataclass
 class Company:
-    name: str = ""
-    industry: str = ""
+    name: str = "Acme Innovations"
+    industry: str = "Technology"
     size: str = "Mid-market"
-    goals: str = ""
+    goals: str = "Increase qualified demand, accelerate sales cycles, reinforce brand trust…"
 
 
-def init() -> None:
-    """Ensure base state keys exist once per session."""
-    st.session_state.setdefault("company", Company())
-    st.session_state.setdefault("brand_rules", "")
-    # you can add more defaults here if needed
+def _init_company_if_needed() -> None:
+    if "company" not in st.session_state or not isinstance(st.session_state["company"], dict):
+        st.session_state["company"] = asdict(Company())
 
 
-def get_company() -> Company:
-    # Return a dataclass (not a dict) so pages can use asdict() safely
-    co = st.session_state.get("company_obj")
-    if isinstance(co, Company):
-        return co
-    # fallback from any older dict to Company once
-    d = st.session_state.get("company", {})
-    if isinstance(d, dict):
-        co = Company(
-            name=d.get("name", ""),
-            industry=d.get("industry", ""),
-            size=d.get("size", "Mid-market"),
-            goals=d.get("goals", ""),
-        )
-    else:
-        co = Company()
-    st.session_state["company_obj"] = co
-    return co
-
-def set_company(co: Company) -> None:
-    st.session_state["company_obj"] = co
+def get_company() -> Dict[str, str]:
+    """Return company dict with keys: name, industry, size, goals."""
+    _init_company_if_needed()
+    return st.session_state["company"]
 
 
-def get_company_dict() -> dict:
-    """Convenience for saving to history, if needed."""
-    return asdict(get_company())
+def set_company(**kwargs) -> None:
+    """Update any of: name, industry, size, goals."""
+    _init_company_if_needed()
+    st.session_state["company"].update({k: v for k, v in kwargs.items() if v is not None})
 
-# ---- Brand rules (plain text) ----
+
 def get_brand_rules() -> str:
-    # Always return a string (Streamlit widget defaults cannot be None)
     return st.session_state.get("brand_rules", "")
 
+
 def set_brand_rules(text: str) -> None:
-    st.session_state["brand_rules"] = text
+    st.session_state["brand_rules"] = text or ""
+
+
+# -----------------------------
+# Guardrails / Throttling
+# -----------------------------
+
+def throttle(seconds: int = 6) -> None:
+    """Prevent accidental double-click runs."""
+    now = time.time()
+    last = st.session_state.get("last_gen_ts", 0.0)
+    if now - last < seconds:
+        wait = int(seconds - (now - last))
+        st.info(f"⏳ Please wait {wait}s before generating again.")
+        st.stop()
+    st.session_state["last_gen_ts"] = now
+
+
+def friendly_ts() -> str:
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
