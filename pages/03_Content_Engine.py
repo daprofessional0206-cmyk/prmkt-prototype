@@ -1,106 +1,55 @@
-# pages/03_Content_Engine.py
 from __future__ import annotations
-
 import streamlit as st
-
-from shared import state, ui
-from shared.llm import llm_copy, is_openai_ready
-from shared.history import add_history
+from dataclasses import asdict
+from shared import ui, state, history
+from shared import llm
 
 st.set_page_config(page_title="Content Engine", page_icon="📝", layout="wide")
+ui.inject_css()
+ui.page_title("Content Engine", "Generate press releases, ads, landing pages, blogs, and social posts.")
 
-ui.page_title(
-    "Content Engine",
-    "Generate press releases, ads, posts, landing pages, and social content.",
-)
+state.init()
+co = state.get_company()
 
-# ------------------------- inputs ------------------------------------
-co = state.get_company()  # dict
-lang = st.selectbox("Language", ["English"], index=0)
-variants = st.number_input("Variants (A/B/C)", min_value=1, max_value=3, value=1, step=1)
+cols = st.columns(3)
+with cols[0]:
+    content_type = st.selectbox("Content Type", ["Press Release", "Ad Copy", "Landing Page", "Blog Post", "Social Post"], index=0)
+with cols[1]:
+    tone = st.selectbox("Tone", ["Professional", "Friendly", "Bold", "Playful"], index=0)
+with cols[2]:
+    length = st.selectbox("Length", ["Short", "Medium", "Long"], index=1)
 
-content_type = st.selectbox(
-    "Content type",
-    [
-        "Press Release",
-        "Ad Copy",
-        "Landing Page",
-        "LinkedIn Post",
-        "Twitter/X Thread",
-        "Email",
-        "Blog Intro",
-    ],
-)
+cols2 = st.columns(2)
+with cols2[0]:
+    lang = st.selectbox("Language", ["English", "Hindi", "Spanish", "French"], index=0)
+with cols2[1]:
+    n = st.number_input("Variants (A/B/C…)", min_value=1, max_value=5, value=1, step=1)
 
-tone = st.selectbox("Tone", ["Professional", "Bold", "Playful", "Journalistic"], index=0)
-length = st.selectbox("Length", ["Short", "Medium", "Long"], index=1)
+if st.button("Generate A/B/C Variants", type="primary"):
+    drafts, err = llm.variants(content_type, int(n), co, tone, length, lang)
 
-generate = st.button("Generate A/B/C Variants", use_container_width=True)
+    history.add_history(
+        "variants",
+        payload={
+            "content_type": content_type,
+            "tone": tone,
+            "length": length,
+            "language": lang,
+            "company": asdict(co),
+        },
+        result=drafts,
+        tags=["variants", content_type, tone, length, lang] + ([co.size] if co.size else []),
+    )
 
-def make_prompt(content_type: str, company: dict, tone: str, length: str, lang: str) -> str:
-    name = company.get("name", "Company")
-    industry = company.get("industry", "Industry")
-    size = company.get("size", "Mid-market")
-    goals = (company.get("goals", "") or "").strip()
-    rules = (state.get_brand_rules() or "").strip()
-
-    return f"""You are a senior copywriter.
-
-Company: {name} (Industry: {industry}, Size: {size}).
-Goals: {goals or "(not specified)"}.
-Brand rules (do/don't, banned words), if any:
-{rules or "(none)"}
-
-Write {variants} {content_type} variant(s) in {lang}.
-Tone: {tone}. Length: {length}.
-
-Each variant must be clearly separated with a heading like 'Variant 1', 'Variant 2', etc.
-Include: a strong hook, 2–3 proof points tied to the audience, and a clear CTA.
-Avoid generic filler; keep it brand‑safe."""
-# ---------------------------------------------------------------------
-
-if generate:
-    if not is_openai_ready():
-        st.error("LLM not ready. Check **Admin Settings → OpenAI** and try again.")
+    if err:
+        st.error("Could not generate right now (LLM issue). Showing a minimal fallback draft.")
+        for i, d in enumerate(drafts, 1):
+            st.markdown(f"**Variant {i}**")
+            st.code(d)
+        st.caption(f"Details: {err}")
     else:
-        p = make_prompt(content_type, co, tone, length, lang)
-        txt = None
-        err = None
-        try:
-            txt = llm_copy(p, max_tokens=900)
-        except Exception as e:
-            err = str(e)
-
-        if txt:
-            st.success("Draft(s) created!")
-            st.markdown(txt)
-            add_history(
-                "variants",
-                input={
-                    "prompt": p,
-                    "content_type": content_type,
-                    "tone": tone,
-                    "length": length,
-                    "language": lang,
-                    "company": co,
-                },
-                output={"text": txt},
-                tags=["variants", content_type, tone, length, lang, co.get("industry", "Industry"), co.get("size", "Mid-market")],
-            )
-        else:
-            st.error("Could not generate right now (LLM issue). Showing a minimal fallback draft.")
-            fallback = "Draft:\n• Opening line tailored to the audience.\n• Benefit/feature #1\n• Benefit/feature #2\n• Clear CTA"
-            st.code(fallback)
-            add_history(
-                "variants",
-                input={
-                    "prompt": p,
-                    "content_type": content_type,
-                    "tone": tone,
-                    "length": length,
-                    "language": lang,
-                    "company": co,
-                },
-                output={"text": fallback, "error": err or "fallback"},
-                tags=["variants", "fallback", content_type, tone, length, lang],
-            )
+        st.success("Draft(s) created!")
+        for i, d in enumerate(drafts, 1):
+            with st.expander(f"Variant {i}"):
+                st.write(d)
+                st.download_button(f"Download Variant {i} (.txt)", d, file_name=f"variant_{i}.txt")

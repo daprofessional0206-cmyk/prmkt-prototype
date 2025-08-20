@@ -1,67 +1,33 @@
-# pages/05_History_Insights.py
 from __future__ import annotations
-import json
-import time
 import streamlit as st
+from shared import ui, history
 
-# Try to use helpers if they exist
-try:
-    from shared.history import filtered, export_json, import_json, get_history, known_tags  # type: ignore
-except Exception:
-    def get_history():
-        return st.session_state.get("history", [])
-    def filtered(kinds=None, tags=None, text=None):
-        data = get_history()
-        kinds = kinds or []
-        tags = tags or []
-        text = (text or "").lower().strip()
-        def ok(item):
-            if kinds and item.get("kind") not in kinds: return False
-            if tags and not set(tags).issubset(set(item.get("tags", []))): return False
-            if text and text not in json.dumps(item).lower(): return False
-            return True
-        return [x for x in data if ok(x)]
-    def export_json(items): 
-        return json.dumps(items, ensure_ascii=False, indent=2)
-    def import_json(txt):
-        return json.loads(txt)
-    def known_tags():  # derive from data
-        seen = set()
-        for it in get_history(): 
-            for t in it.get("tags", []): seen.add(t)
-        return sorted(seen)
+st.set_page_config(page_title="History & Insights", page_icon="📊", layout="wide")
+ui.inject_css()
+ui.page_title("History (last 20)")
 
-st.set_page_config(page_title="History & Insights", page_icon="📜", layout="wide")
-st.title("History (last 20)")
-
-with st.expander("Export / Import"):
-    c1, c2 = st.columns(2)
+with st.expander("Export / Import", expanded=True):
+    c1, c2 = st.columns([1, 1])
     with c1:
         if st.button("Export history (.json)"):
-            txt = export_json(get_history())
-            st.download_button("Download history.json", txt, file_name="history.json")
+            st.download_button("Download", data=history.export_json(), file_name="history.json", mime="application/json")
+        if st.button("Clear history", type="secondary"):
+            history.clear_history()
+            st.success("History cleared.")
     with c2:
-        up = st.file_uploader("Import history (.json)", type=["json"])
-        if up is not None:
-            try:
-                items = import_json(up.getvalue().decode("utf-8"))
-                st.session_state.setdefault("history", [])
-                st.session_state["history"].extend(items)
-                st.success(f"Imported {len(items)} items.")
-            except Exception as e:
-                st.error(f"Failed to import: {e}")
+        uploaded = st.file_uploader("Import history (.json)", type=["json"])
+        if uploaded is not None:
+            ok, msg = history.import_json(uploaded.read().decode("utf-8"))
+            (st.success if ok else st.error)(msg)
 
-# Filters
-kinds = st.multiselect("Filter by type", options=["variants","strategy","ab_test"], default=[])
-tags = st.multiselect("Filter by tag(s)", options=known_tags(), default=[])
-search = st.text_input("Search text")
+kinds, tag_opts = history.filter_options()
+kind_sel = st.multiselect("Filter by type", kinds, default=[])
+tag_sel = st.multiselect("Filter by tag(s)", tag_opts, default=[])
+query = st.text_input("Search text")
 
-items = filtered(kinds=kinds, tags=tags, text=search)[:20]
-st.write(f"Showing {len(items)} of up to 20 items.")
-
-for i, it in enumerate(items, start=1):
-    with st.expander(f"{i}. {it.get('kind','item')} • {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(it.get('ts', time.time())))}"):
-        st.json(it.get("payload", {}))
-        st.markdown(it.get("output", ""))
-        if it.get("tags"):
-            st.caption("Tags: " + ", ".join(it["tags"]))
+items = history.filtered(kind_sel, tag_sel, query, limit=20)
+st.caption(f"Showing {len(items)} of up to 20 items.")
+for it in items:
+    with st.expander(f"{it['ts']} · {it.get('kind','—')} · {', '.join(it.get('tags',[]))}"):
+        st.json(it["payload"])
+        st.write(it["result"])
