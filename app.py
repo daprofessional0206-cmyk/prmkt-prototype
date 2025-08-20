@@ -10,6 +10,7 @@ import streamlit as st
 
 # Local shared modules (created earlier)
 from shared import state, history
+from shared.llm import is_openai_ready
 
 # ──────────────────────────────────────────────────────────────────────────────
 # App config + light CSS
@@ -56,7 +57,6 @@ def ensure_sample_dataset() -> None:
         )
 
 ensure_sample_dataset()
-
 # ──────────────────────────────────────────────────────────────────────────────
 # Sidebar: status + dataset preview
 # ──────────────────────────────────────────────────────────────────────────────
@@ -64,11 +64,9 @@ with st.sidebar:
     st.subheader("⚙️ App Status")
     st.caption("Presence — multi-page prototype (Phase 3.2)")
 
-    # Secrets / API status
-    if state.has_openai():
-        st.success("OpenAI: Connected")
-    else:
-        st.info("OpenAI: Offline (using templates)")
+    st.subheader("App Status")
+    st.write("Presence — multi-page prototype (Phase 3.2)")
+    st.write(f"OpenAI: {'✅ Connected' if is_openai_ready() else '❌ Missing key'}")
 
     divider()
 
@@ -86,6 +84,7 @@ with st.sidebar:
         st.warning(f"Could not load dataset preview: {e!s}")
 
     divider()
+    st.caption("Use the navigation in the left sidebar to open pages.")
     st.caption("Use the navigation in the left sidebar to open pages.")
 
 # ──────────────────────────────────────────────────────────────────────────────

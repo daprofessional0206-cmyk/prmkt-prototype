@@ -1,32 +1,42 @@
+# pages/02_Strategy_Ideas.py
+from __future__ import annotations
 import streamlit as st
-from shared import state, history
-from shared.llm import generate_copy
+from shared import state
+from shared.llm import is_openai_ready, llm_copy
 
-st.set_page_config(page_title="Strategy Ideas", page_icon="💡")
-
+state.init()
+st.set_page_config(page_title="Strategy Ideas", layout="wide")
 st.title("💡 Strategy Ideas")
-st.write("Brainstorm bold PR & marketing angles quickly.")
+st.caption("Brainstorm bold PR & marketing angles quickly.")
 
-state.throttle()
+ok, remaining = state.can_generate(4)
+if not ok:
+    st.info(f"Please wait {remaining}s before generating again.")
+    st.stop()
+
+if not is_openai_ready():
+    st.warning("OpenAI key not configured. Set it in environment/Streamlit secrets.")
+    st.stop()
 
 company = state.get_company()
+rules = state.get_brand_rules()
 
-topic = st.text_input("What’s the campaign about?", placeholder="Product launch, rebrand, crisis response...")
-audience = st.text_input("Target audience", value="Decision-makers, media, customers")
-tone = st.selectbox("Tone", ["Bold", "Professional", "Playful", "Inspirational"])
-variants = st.slider("How many ideas?", 1, 5, 3)
+prompt = f"""
+Suggest 5 concise PR/marketing strategy ideas.
 
-if st.button("✨ Generate Ideas"):
-    brief = {
-        "content_type": "Strategy",
-        "topic": topic,
-        "audience": audience,
-        "tone": tone,
-        "variants": variants,
-        "brand_rules": state.get_brand_rules(),
-    }
-    outputs = generate_copy(company, brief)
-    for o in outputs:
-        st.markdown(o)
-        st.divider()
-    history.add("Strategy", brief, outputs, tags=["strategy"])
+Company: {company.get('name','')}
+Industry: {company.get('industry','')}
+Size: {company.get('size','')}
+Goals: {company.get('goals','')}
+Brand rules (optional): {rules if rules else '—'}
+
+Output as a short numbered list (1–5), each idea in 1–2 sentences.
+"""
+
+try:
+    ideas = llm_copy(prompt).strip()
+    st.success("Ideas generated!")
+    st.markdown(ideas)
+    state.add_history("strategy", {"prompt": prompt}, ideas, tags=["strategy"])
+except Exception as e:
+    st.error(str(e))
