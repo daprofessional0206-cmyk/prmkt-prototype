@@ -136,14 +136,74 @@ with col5:
 
 divider()
 
-st.subheader("Recent activity")
-items = history.get_history()
+# === Recent activity (safe renderer) =========================================
+import json
+from datetime import datetime
+
+try:
+    # prefer central helpers if available
+    from shared.history import get_history  # type: ignore
+except Exception:
+    def get_history():
+        return st.session_state.get("history", [])
+
+st.markdown("### History (last 20)")
+
+def _normalize_for_view(it: dict) -> dict:
+    """
+    Handle legacy/malformed rows gracefully (no KeyErrors).
+    Accepts old shapes like {'type':..., 'input':..., 'result':...}.
+    """
+    if not isinstance(it, dict):
+        return {
+            "kind": "unknown",
+            "payload": {},
+            "output": it,
+            "tags": [],
+            "created_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        }
+
+    kind = it.get("kind") or it.get("type") or "unknown"
+    payload = it.get("payload") or it.get("input") or it.get("data") or {}
+    output = it.get("output") if "output" in it else it.get("result")
+    tags = it.get("tags", [])
+    created = it.get("created_at") or it.get("ts") or datetime.utcnow().isoformat(timespec="seconds") + "Z"
+    return {
+        "kind": kind,
+        "payload": payload if isinstance(payload, dict) else {"value": payload},
+        "output": output,
+        "tags": tags if isinstance(tags, list) else [str(tags)],
+        "created_at": created,
+    }
+
+items = get_history()[:20]
 if not items:
-    st.caption("No history yet. Generate content or strategies to see them here.")
+    st.caption("No history yet.")
 else:
-    for it in items[:5]:
-        st.markdown(f"**{it['kind']}** — {it['ts']}")
-        if it.get("tags"):
-            st.caption(", ".join(it["tags"]))
-        st.json(it["input"])
-        st.divider()
+    for idx, raw in enumerate(items, start=1):
+        it = _normalize_for_view(raw)
+        title = f"{idx}. {it['kind']} • {it['created_at']}"
+        with st.expander(title, expanded=False):
+            c1, c2 = st.columns(2)
+            with c1:
+                st.caption("Input")
+                try:
+                    st.json(it["payload"])
+                except Exception:
+                    st.write(it["payload"])
+                if it.get("tags"):
+                    st.caption("Tags")
+                    st.write(", ".join(map(str, it["tags"])))
+            with c2:
+                st.caption("Output")
+                out = it.get("output")
+                if out is None:
+                    st.write("—")
+                elif isinstance(out, (list, tuple)):
+                    for j, v in enumerate(out, start=1):
+                        st.markdown(f"**Variant {j}**")
+                        st.write(v if isinstance(v, str) else json.dumps(v, indent=2))
+                elif isinstance(out, dict):
+                    st.json(out)
+                else:
+                    st.write(str(out))
