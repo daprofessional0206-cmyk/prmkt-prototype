@@ -3,106 +3,104 @@ from __future__ import annotations
 
 import streamlit as st
 
-from shared.state import get_company, get_brand_rules
+from shared import state, ui
 from shared.llm import llm_copy, is_openai_ready
 from shared.history import add_history
 
+st.set_page_config(page_title="Content Engine", page_icon="📝", layout="wide")
 
-st.set_page_config(page_title="Content Engine", page_icon="📰", layout="wide")
-st.title("📰 Content Engine")
-st.caption("Generate press releases, ads, landing pages, blogs, and social posts.")
+ui.page_title(
+    "Content Engine",
+    "Generate press releases, ads, posts, landing pages, and social content.",
+)
 
-co = get_company()
-brand_rules = get_brand_rules()
+# ------------------------- inputs ------------------------------------
+co = state.get_company()  # dict
+lang = st.selectbox("Language", ["English"], index=0)
+variants = st.number_input("Variants (A/B/C)", min_value=1, max_value=3, value=1, step=1)
 
-col1, col2 = st.columns(2)
-with col1:
-    content_type = st.selectbox(
-        "Content Type",
-        ["Press Release", "Ad Copy", "Landing Page", "Blog Post", "Social Post"],
-        index=0,
-    )
-with col2:
-    tone = st.selectbox("Tone", ["Professional", "Neutral", "Playful", "Bold"], index=0)
+content_type = st.selectbox(
+    "Content type",
+    [
+        "Press Release",
+        "Ad Copy",
+        "Landing Page",
+        "LinkedIn Post",
+        "Twitter/X Thread",
+        "Email",
+        "Blog Intro",
+    ],
+)
 
-col3, col4 = st.columns(2)
-with col3:
-    length = st.selectbox("Length", ["Short", "Medium", "Long"], index=0)
-with col4:
-    lang = st.selectbox("Language", ["English"], index=0)
+tone = st.selectbox("Tone", ["Professional", "Bold", "Playful", "Journalistic"], index=0)
+length = st.selectbox("Length", ["Short", "Medium", "Long"], index=1)
 
-cta = st.text_input("Call to action (optional)", value="")
-topic = st.text_input("Topic / Offer / Product", value="")
-bullets = st.text_area("Key points (bullets, optional)", value="", height=100)
+generate = st.button("Generate A/B/C Variants", use_container_width=True)
 
-count = st.number_input("Variants (A/B/C)", min_value=1, max_value=3, value=1, step=1)
-go = st.button("Generate A/B/C Variants", type="primary", use_container_width=True)
+def make_prompt(content_type: str, company: dict, tone: str, length: str, lang: str) -> str:
+    name = company.get("name", "Company")
+    industry = company.get("industry", "Industry")
+    size = company.get("size", "Mid-market")
+    goals = (company.get("goals", "") or "").strip()
+    rules = (state.get_brand_rules() or "").strip()
 
-if go:
+    return f"""You are a senior copywriter.
+
+Company: {name} (Industry: {industry}, Size: {size}).
+Goals: {goals or "(not specified)"}.
+Brand rules (do/don't, banned words), if any:
+{rules or "(none)"}
+
+Write {variants} {content_type} variant(s) in {lang}.
+Tone: {tone}. Length: {length}.
+
+Each variant must be clearly separated with a heading like 'Variant 1', 'Variant 2', etc.
+Include: a strong hook, 2–3 proof points tied to the audience, and a clear CTA.
+Avoid generic filler; keep it brand‑safe."""
+# ---------------------------------------------------------------------
+
+if generate:
     if not is_openai_ready():
-        st.error("OpenAI key not found. Set it in **Admin Settings → How to set the key**.")
-        st.stop()
+        st.error("LLM not ready. Check **Admin Settings → OpenAI** and try again.")
+    else:
+        p = make_prompt(content_type, co, tone, length, lang)
+        txt = None
+        err = None
+        try:
+            txt = llm_copy(p, max_tokens=900)
+        except Exception as e:
+            err = str(e)
 
-    # Build prompt once
-    br = f"\nBrand rules to respect: {brand_rules}" if brand_rules else ""
-    pts = f"\nKey points:\n{bullets}" if bullets.strip() else ""
-    cta_line = f"\nClear CTA: {cta}" if cta.strip() else ""
-    base_prompt = (
-        f"Write {count} distinct {content_type} variant(s) in {lang}. "
-        f"Company: {co.name} (Industry: {co.industry}, Size: {co.size}).\n"
-        f"Topic/Offer: {topic}\n"
-        f"Tone: {tone}. Length: {length}.{br}{pts}{cta_line}\n"
-        f"Format each variant with a short **headline** and a concise **body**.\n"
-        f"Return plain text."
-    )
-
-    try:
-        text = llm_copy(base_prompt)
-        st.success("Draft(s) created!")
-        st.text_area("Output", value=text, height=350)
-
-        add_history(
-            "variants",
-            payload={
-                "content_type": content_type,
-                "tone": tone,
-                "length": length,
-                "language": lang,
-                "topic": topic,
-                "cta": cta,
-                "bullets": bullets,
-                "brand_rules_present": bool(brand_rules),
-                "company": co.asdict(),
-            },
-            output={"text": text},
-            tags=[content_type, lang, tone],
-        )
-    except Exception as e:
-        st.error(
-            "Couldn’t generate content. If you just rotated keys, hit **Manage app → Reboot**, "
-            "then try again. Details were saved to history."
-        )
-        fallback = (
-            "Draft:\n"
-            "• Opening line tailored to the audience.\n"
-            "• Benefit/feature #1\n"
-            "• Benefit/feature #2\n"
-            "• Clear CTA"
-        )
-        st.text_area("Fallback", value=fallback, height=220)
-        add_history(
-            "variants",
-            payload={
-                "content_type": content_type,
-                "tone": tone,
-                "length": length,
-                "language": lang,
-                "topic": topic,
-                "cta": cta,
-                "bullets": bullets,
-                "brand_rules_present": bool(brand_rules),
-                "company": co.asdict(),
-            },
-            output={"text": fallback, "error": str(e)},
-            tags=[content_type, "fallback"],
-        )
+        if txt:
+            st.success("Draft(s) created!")
+            st.markdown(txt)
+            add_history(
+                "variants",
+                input={
+                    "prompt": p,
+                    "content_type": content_type,
+                    "tone": tone,
+                    "length": length,
+                    "language": lang,
+                    "company": co,
+                },
+                output={"text": txt},
+                tags=["variants", content_type, tone, length, lang, co.get("industry", "Industry"), co.get("size", "Mid-market")],
+            )
+        else:
+            st.error("Could not generate right now (LLM issue). Showing a minimal fallback draft.")
+            fallback = "Draft:\n• Opening line tailored to the audience.\n• Benefit/feature #1\n• Benefit/feature #2\n• Clear CTA"
+            st.code(fallback)
+            add_history(
+                "variants",
+                input={
+                    "prompt": p,
+                    "content_type": content_type,
+                    "tone": tone,
+                    "length": length,
+                    "language": lang,
+                    "company": co,
+                },
+                output={"text": fallback, "error": err or "fallback"},
+                tags=["variants", "fallback", content_type, tone, length, lang],
+            )
