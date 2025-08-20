@@ -1,134 +1,104 @@
 # shared/history.py
 from __future__ import annotations
-
+from typing import List, Dict, Any, Optional, Tuple
+from datetime import datetime
 import json
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
-
 import streamlit as st
 
 
-# ---------- Internal ----------
-def _ensure_history() -> List[Dict[str, Any]]:
-    if "history" not in st.session_state or not isinstance(st.session_state["history"], list):
-        st.session_state["history"] = []
-    return st.session_state["history"]
+# ---------- internal ---------------------------------------------------------
+def _store() -> List[Dict[str, Any]]:
+    """Return the in-session history list, creating it if missing."""
+    return st.session_state.setdefault("history", [])
 
 
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-# ---------- Public API ----------
-def get_history() -> List[Dict[str, Any]]:
-    """Return the session history list (never None)."""
-    return list(_ensure_history())  # return a shallow copy
-
-
-def clear_history() -> None:
-    st.session_state["history"] = []
-
-
+# ---------- write ------------------------------------------------------------
 def add_history(
     kind: str,
-    inputs: Dict[str, Any],
-    outputs: Any,
+    payload: Dict[str, Any],
+    result: Any,
     tags: Optional[List[str]] = None,
 ) -> None:
     """
-    Append a standard history item. Keys are conservative so pages
-    can safely read them without KeyErrors.
+    Append a history item to session state.
+    - kind: short type like "variants", "strategy", "test"
+    - payload: inputs used to generate the result
+    - result: the generated output (text, dict, list...)
+    - tags: optional list of strings for filtering (e.g., ["press_release","English"])
     """
-    hist = _ensure_history()
-    entry: Dict[str, Any] = {
-        "ts": _now_iso(),
-        "kind": str(kind),
-        "inputs": inputs or {},
-        "outputs": outputs,
-        "tags": list(tags) if tags else [],
+    item: Dict[str, Any] = {
+        "kind": kind,
+        "payload": payload,
+        "result": result,
+        "tags": tags or [],
+        "ts": datetime.utcnow().isoformat(timespec="seconds") + "Z",
     }
-    hist.append(entry)
+    # newest first
+    _store().insert(0, item)
+
+
+# Backward-compat for older pages that did: from shared.history import add
+add = add_history  # noqa: N816
+
+
+# ---------- read / query -----------------------------------------------------
+def get_history(limit: int = 20) -> List[Dict[str, Any]]:
+    """Return most recent items (default 20)."""
+    return _store()[:limit]
+
+
+def clear_history() -> None:
+    """Remove all items."""
+    st.session_state["history"] = []
+
+
+def filter_options() -> Tuple[List[str], List[str]]:
+    """
+    Return (kinds, tags) seen in history for populating select widgets.
+    """
+    kinds = sorted({it.get("kind", "") for it in _store() if it.get("kind")})
+    tags = sorted({t for it in _store() for t in it.get("tags", [])})
+    return kinds, tags
 
 
 def filtered(
     kinds: Optional[List[str]] = None,
     tags: Optional[List[str]] = None,
     search: str = "",
+    limit: int = 20,
 ) -> List[Dict[str, Any]]:
     """
-    Filter history in-memory by kind, tags and free-text search
-    (searches inputs/outputs stringified).
+    Filter history by kinds, tags and free-text search.
     """
-    data = _ensure_history()
-    if not data:
-        return []
-
-    kinds_set = {k.lower() for k in (kinds or [])}
-    tags_set = {t.lower() for t in (tags or [])}
-    s = (search or "").lower().strip()
-
-    def _match(item: Dict[str, Any]) -> bool:
-        if kinds_set:
-            if item.get("kind", "").lower() not in kinds_set:
-                return False
-        if tags_set:
-            item_tags = {str(t).lower() for t in item.get("tags", [])}
-            if not (item_tags & tags_set):
-                return False
-        if s:
-            blob = (json.dumps(item.get("inputs", {}), ensure_ascii=False) + " " +
-                    json.dumps(item.get("outputs", {}), ensure_ascii=False)).lower()
-            if s not in blob:
-                return False
-        return True
-
-    return [it for it in data if _match(it)]
+    items = list(_store())
+    if kinds:
+        items = [it for it in items if it.get("kind") in kinds]
+    if tags:
+        tagset = set(tags)
+        items = [it for it in items if tagset.intersection(it.get("tags", []))]
+    if search:
+        s = search.lower()
+        items = [it for it in items if s in json.dumps(it, ensure_ascii=False).lower()]
+    return items[:limit]
 
 
-# --- Import / Export helpers used by the History page ---
+# ---------- import / export --------------------------------------------------
+def export_json() -> str:
+    """Return the whole history as a pretty JSON string."""
+    return json.dumps(_store(), ensure_ascii=False, indent=2)
 
-def to_json() -> str:
-    """Return the whole history as a JSON string."""
-    return json.dumps(_ensure_history(), ensure_ascii=False, indent=2)
 
-
-def from_json(text_or_bytes: Any) -> int:
+def import_json(text: str) -> Tuple[bool, str]:
     """
-    Load items from a JSON string/bytes and append to history.
-    Returns the number of items appended. Skips invalid rows.
+    Merge items from a JSON string (list of dicts) into history.
+    Returns (ok, message).
     """
-    if text_or_bytes is None:
-        return 0
-
     try:
-        if isinstance(text_or_bytes, (bytes, bytearray)):
-            payload = json.loads(text_or_bytes.decode("utf-8", errors="ignore"))
-        elif isinstance(text_or_bytes, str):
-            payload = json.loads(text_or_bytes)
-        else:
-            # Try Streamlit UploadedFile
-            try:
-                payload = json.loads(text_or_bytes.getvalue().decode("utf-8", errors="ignore"))  # type: ignore[attr-defined]
-            except Exception:
-                return 0
-    except Exception:
-        return 0
-
-    if not isinstance(payload, list):
-        return 0
-
-    added = 0
-    hist = _ensure_history()
-    for row in payload:
-        if not isinstance(row, dict):
-            continue
-        # normalize keys we actually use
-        hist.append({
-            "ts": row.get("ts") or _now_iso(),
-            "kind": row.get("kind", "unknown"),
-            "inputs": row.get("inputs", {}),
-            "outputs": row.get("outputs", {}),
-            "tags": row.get("tags", []),
-        })
-        added += 1
-    return added
+        data = json.loads(text)
+        if isinstance(data, list):
+            # prepend imported items so they appear first
+            st.session_state["history"] = list(data) + _store()
+            return True, f"Imported {len(data)} item(s)."
+        return False, "JSON root must be a list."
+    except Exception as e:
+        return False, f"Invalid JSON: {e}"
