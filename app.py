@@ -36,28 +36,25 @@ with st.container():
     with cols[0]:
         st.header("🏢 Company Profile")
         st.write("Set your **name, industry, size, goals**, and brand rules once; all tools use them.")
-        ui.page_link("pages/01_Company_Profile.py", "Open Company Profile →")
-
+        st.page_link("pages/01_Company_Profile.py",  label="Open Company Profile →",   icon="🏢")
     with cols[1]:
         st.header("💡 Strategy Ideas")
         st.write("Brainstorm **campaign angles & PR ideas**. Generates multiple variants fast.")
-        ui.page_link("pages/02_Strategy_Ideas.py", "Open Strategy Ideas →")
-
+        st.page_link("pages/02_Strategy_Ideas.py",   label="Open Strategy Ideas →",    icon="💡")
     with cols[2]:
         st.header("📝 Content Engine")
         st.write("Create **press releases, ads, posts, landing pages, blogs** with brand-safe copy.")
-        ui.page_link("pages/03_Content_Engine.py", "Open Content Engine →")
+        st.page_link("pages/03_Content_Engine.py",   label="Open Content Engine →",   icon="📝")
 
 cols = st.columns(2)
 with cols[0]:
     st.header("🧪 Optimizer Tests")
     st.write("Test different **tones/lengths/styles** to optimize messaging.")
-    ui.page_link("pages/04_Optimizer_Tests.py", "Open Optimizer Tests →")
-
+    st.page_link("pages/04_Optimizer_Tests.py",  label="Open Optimizer Tests →",   icon="📈")
 with cols[1]:
     st.header("📊 History & Insights")
     st.write("View/export/import all generated content, strategies, and tests.")
-    ui.page_link("pages/05_History_Insights.py", "Open History & Insights →")
+    st.page_link("pages/05_History_Insights.py",  label="Open History & Insights →",   icon="📊")
 
 # ----------------- OpenAI status -----------------
 st.divider()
