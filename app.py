@@ -91,3 +91,6 @@ else:
         with st.expander(f"{it['ts']} · {it.get('kind','—')} · {', '.join(it.get('tags',[]))}"):
             st.json(it["payload"])
             st.write(it["result"])
+# ── Footer ────────────────────────────────────────────────────────────────────
+import streamlit as st  # safe if already imported
+st.caption("Presence — multi-page prototype (Phase 3.2 • build v3.2)")

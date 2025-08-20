@@ -5,6 +5,16 @@ import pandas as pd
 import streamlit as st
 
 from shared import state
+# ── Sidebar health badge (safe) ───────────────────────────────────────────────
+import streamlit as st
+try:
+    from shared import state
+    with st.sidebar:
+        st.write(f"OpenAI: {'✅ Connected' if state.has_openai() else '❌ Missing'}")
+except Exception:
+    # Never crash the page if the helper isn't available
+    with st.sidebar:
+        st.write("OpenAI: status unavailable")
 
 # Optional dataset helpers (won't crash if missing)
 try:
@@ -38,3 +48,6 @@ with st.expander("How to set the key (quick reference)"):
 openai_api_key: sk-...
     """
 )
+# ── Footer ────────────────────────────────────────────────────────────────────
+import streamlit as st  # safe if already imported
+st.caption("Presence — multi-page prototype (Phase 3.2 • build v3.2)")

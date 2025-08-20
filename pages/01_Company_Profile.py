@@ -2,6 +2,17 @@ from __future__ import annotations
 import streamlit as st
 from shared import ui, state
 
+# ── Sidebar health badge (safe) ───────────────────────────────────────────────
+import streamlit as st
+try:
+    from shared import state
+    with st.sidebar:
+        st.write(f"OpenAI: {'✅ Connected' if state.has_openai() else '❌ Missing'}")
+except Exception:
+    # Never crash the page if the helper isn't available
+    with st.sidebar:
+        st.write("OpenAI: status unavailable")
+
 st.set_page_config(page_title="Company Profile", page_icon="🏢", layout="wide")
 ui.inject_css()
 ui.page_title("Company Profile")
@@ -23,3 +34,6 @@ brand_rules = st.text_area("Brand rules (do’s/don’ts, banned words; optional
 if st.button("Save profile", type="primary"):
     state.set_company(name=name, industry=industry, size=size, goals=goals, brand_rules=brand_rules)
     st.success("Saved. Other pages will now use your profile.")
+# ── Footer ────────────────────────────────────────────────────────────────────
+import streamlit as st  # safe if already imported
+st.caption("Presence — multi-page prototype (Phase 3.2 • build v3.2)")

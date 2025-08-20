@@ -4,6 +4,17 @@ from dataclasses import asdict
 from shared import ui, state, history
 from shared import llm
 
+# ── Sidebar health badge (safe) ───────────────────────────────────────────────
+import streamlit as st
+try:
+    from shared import state
+    with st.sidebar:
+        st.write(f"OpenAI: {'✅ Connected' if state.has_openai() else '❌ Missing'}")
+except Exception:
+    # Never crash the page if the helper isn't available
+    with st.sidebar:
+        st.write("OpenAI: status unavailable")
+
 st.set_page_config(page_title="Content Engine", page_icon="📝", layout="wide")
 ui.inject_css()
 ui.page_title("Content Engine", "Generate press releases, ads, landing pages, blogs, and social posts.")
@@ -53,3 +64,6 @@ if st.button("Generate A/B/C Variants", type="primary"):
             with st.expander(f"Variant {i}"):
                 st.write(d)
                 st.download_button(f"Download Variant {i} (.txt)", d, file_name=f"variant_{i}.txt")
+# ── Footer ────────────────────────────────────────────────────────────────────
+import streamlit as st  # safe if already imported
+st.caption("Presence — multi-page prototype (Phase 3.2 • build v3.2)")

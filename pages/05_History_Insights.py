@@ -2,6 +2,17 @@ from __future__ import annotations
 import streamlit as st
 from shared import ui, history
 
+# ── Sidebar health badge (safe) ───────────────────────────────────────────────
+import streamlit as st
+try:
+    from shared import state
+    with st.sidebar:
+        st.write(f"OpenAI: {'✅ Connected' if state.has_openai() else '❌ Missing'}")
+except Exception:
+    # Never crash the page if the helper isn't available
+    with st.sidebar:
+        st.write("OpenAI: status unavailable")
+
 st.set_page_config(page_title="History & Insights", page_icon="📊", layout="wide")
 ui.inject_css()
 ui.page_title("History (last 20)")
@@ -31,3 +42,6 @@ for it in items:
     with st.expander(f"{it['ts']} · {it.get('kind','—')} · {', '.join(it.get('tags',[]))}"):
         st.json(it["payload"])
         st.write(it["result"])
+# ── Footer ────────────────────────────────────────────────────────────────────
+import streamlit as st  # safe if already imported
+st.caption("Presence — multi-page prototype (Phase 3.2 • build v3.2)")

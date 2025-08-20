@@ -4,6 +4,17 @@ from dataclasses import asdict
 from shared import ui, state, history
 from shared import llm
 
+# ── Sidebar health badge (safe) ───────────────────────────────────────────────
+import streamlit as st
+try:
+    from shared import state
+    with st.sidebar:
+        st.write(f"OpenAI: {'✅ Connected' if state.has_openai() else '❌ Missing'}")
+except Exception:
+    # Never crash the page if the helper isn't available
+    with st.sidebar:
+        st.write("OpenAI: status unavailable")
+
 st.set_page_config(page_title="Optimizer Tests", page_icon="🧪", layout="wide")
 ui.inject_css()
 ui.page_title("Optimizer Tests", "Test different tones, lengths, or styles to optimize messaging.")
@@ -32,3 +43,6 @@ if st.button("Run simple A/B test", type="primary"):
     for i, d in enumerate(drafts, 1):
         with st.expander(f"Candidate {i}"):
             st.write(d)
+# ── Footer ────────────────────────────────────────────────────────────────────
+import streamlit as st  # safe if already imported
+st.caption("Presence — multi-page prototype (Phase 3.2 • build v3.2)")
