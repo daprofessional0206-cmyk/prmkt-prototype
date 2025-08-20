@@ -1,98 +1,222 @@
 # shared/history.py
 from __future__ import annotations
 
-from datetime import datetime
+from dataclasses import asdict, is_dataclass
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+import json
+import io
+
 import streamlit as st
 
 
-def _ensure_state_list(name: str) -> List[Dict[str, Any]]:
-    """Ensure st.session_state[name] is a list and return it."""
-    if name not in st.session_state or not isinstance(st.session_state[name], list):
-        st.session_state[name] = []
-    return st.session_state[name]
+# ---------- internal ----------
+def _ensure_store() -> None:
+    if "history" not in st.session_state:
+        st.session_state["history"] = []  # type: ignore[assignment]
 
 
-def get_history() -> List[Dict[str, Any]]:
-    """Return the in-session history list (never None)."""
-    return _ensure_state_list("history")
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def clear_history() -> None:
-    """Clear the in-session history."""
-    st.session_state["history"] = []
+def _to_jsonable(obj: Any) -> Any:
+    """Make dataclasses JSON-friendly."""
+    if is_dataclass(obj):
+        return asdict(obj)
+    return obj
 
 
-def _normalized_item(
-    *,
+# ---------- public API ----------
+def add_history(
     kind: str,
-    payload: Dict[str, Any] | None,
-    output: Any = None,
+    payload: Dict[str, Any],
+    output: Any,
     tags: Optional[List[str]] = None,
-    created_at: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    Produce a consistent history item schema.
+    Append an item to session history (most-recent first).
 
-    Fields:
-      - kind: str            (e.g., "Variants", "strategy", "optimizer")
-      - payload: dict        (inputs/UI selections)
-      - output: Any          (model result, list, etc.)
-      - tags: List[str]      (optional labels)
-      - created_at: ISO-8601 UTC string
+    kind: one of "strategy", "variants", "optimizer", etc.
+    payload: inputs used to generate output (safe to serialize)
+    output: generated result object (dict / str / list)
+    tags: optional list of strings for filtering (e.g., ["Press Release", "English"])
     """
-    return {
-        "kind": kind or "unknown",
-        "payload": payload or {},
-        "output": output,
-        "tags": tags or [],
-        "created_at": created_at or datetime.utcnow().isoformat(timespec="seconds") + "Z",
+    _ensure_store()
+    item = {
+        "ts": _now_iso(),
+        "kind": kind,
+        "payload": _to_jsonable(payload),
+        "output": _to_jsonable(output),
+        "tags": list(filter(None, tags or [])),
     }
-
-
-def add(
-    *,
-    kind: str,
-    payload: Dict[str, Any] | None,
-    output: Any = None,
-    tags: Optional[List[str]] = None,
-) -> Dict[str, Any]:
-    """
-    Append a normalized item to history and return it.
-    """
-    item = _normalized_item(kind=kind, payload=payload, output=output, tags=tags)
-    get_history().insert(0, item)  # newest first
+    st.session_state["history"].insert(0, item)  # newest first
     return item
 
 
-# -------- Filtering / utility helpers (optional; safe if unused) --------
-
-def filter_by_kind(items: List[Dict[str, Any]], kinds: List[str]) -> List[Dict[str, Any]]:
-    if not kinds:
-        return items
-    want = {k.lower() for k in kinds}
-    return [it for it in items if str(it.get("kind", "")).lower() in want]
+def get_history() -> List[Dict[str, Any]]:
+    _ensure_store()
+    return st.session_state["history"]  # type: ignore[return-value]
 
 
-def filter_by_tags(items: List[Dict[str, Any]], tags: List[str]) -> List[Dict[str, Any]]:
-    if not tags:
-        return items
-    want = {t.lower() for t in tags}
-    out: List[Dict[str, Any]] = []
-    for it in items:
-        its = {str(t).lower() for t in it.get("tags", [])}
-        if want & its:
-            out.append(it)
-    return out
+def clear_history() -> None:
+    st.session_state["history"] = []
 
 
-def search_text(items: List[Dict[str, Any]], q: str) -> List[Dict[str, Any]]:
-    if not q:
-        return items
-    ql = q.lower()
-    out = []
-    for it in items:
-        blob = f"{it.get('kind','')} {it.get('tags',[])} {it.get('payload',{})} {it.get('output','')}"
-        if ql in blob.lower():
-            out.append(it)
-    return out
+def filtered(
+    kinds: Optional[List[str]] = None,
+    tags: Optional[List[str]] = None,
+    search: str = "",
+    limit: int = 20,
+) -> List[Dict[str, Any]]:
+    items = list(get_history())
+    if kinds:
+        ks = set(kinds)
+        items = [it for it in items if it.get("kind") in ks]
+    if tags:
+        tg = set(tags)
+        items = [it for it in items if tg.intersection(set(it.get("tags") or []))]
+    if search:
+        s = search.lower().strip()
+        items = [
+            it
+            for it in items
+            if s in json.dumps(it.get("payload", {})).lower()
+            or s in json.dumps(it.get("output", {})).lower()
+        ]
+    return items[:limit]
+
+
+# ----- import/export (.json) -----
+def export_json() -> bytes:
+    return json.dumps(get_history(), ensure_ascii=False, indent=2).encode("utf-8")
+
+
+def import_json_file(file) -> int:
+    """
+    Accepts a file-like from st.file_uploader. Returns appended count.
+    """
+    try:
+        content = file.read()
+        data = json.loads(content.decode("utf-8"))
+        if not isinstance(data, list):
+            return 0
+        _ensure_store()
+        before = len(st.session_state["history"])
+        # newest-first: bring imported items to the top, in their listed order
+        for it in reversed(data):
+            st.session_state["history"].insert(0, it)
+        return len(st.session_state["history"]) - before
+    except Exception:
+        return 0
+# shared/history.py
+from __future__ import annotations
+
+from dataclasses import asdict, is_dataclass
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
+import json
+import io
+
+import streamlit as st
+
+
+# ---------- internal ----------
+def _ensure_store() -> None:
+    if "history" not in st.session_state:
+        st.session_state["history"] = []  # type: ignore[assignment]
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _to_jsonable(obj: Any) -> Any:
+    """Make dataclasses JSON-friendly."""
+    if is_dataclass(obj):
+        return asdict(obj)
+    return obj
+
+
+# ---------- public API ----------
+def add_history(
+    kind: str,
+    payload: Dict[str, Any],
+    output: Any,
+    tags: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """
+    Append an item to session history (most-recent first).
+
+    kind: one of "strategy", "variants", "optimizer", etc.
+    payload: inputs used to generate output (safe to serialize)
+    output: generated result object (dict / str / list)
+    tags: optional list of strings for filtering (e.g., ["Press Release", "English"])
+    """
+    _ensure_store()
+    item = {
+        "ts": _now_iso(),
+        "kind": kind,
+        "payload": _to_jsonable(payload),
+        "output": _to_jsonable(output),
+        "tags": list(filter(None, tags or [])),
+    }
+    st.session_state["history"].insert(0, item)  # newest first
+    return item
+
+
+def get_history() -> List[Dict[str, Any]]:
+    _ensure_store()
+    return st.session_state["history"]  # type: ignore[return-value]
+
+
+def clear_history() -> None:
+    st.session_state["history"] = []
+
+
+def filtered(
+    kinds: Optional[List[str]] = None,
+    tags: Optional[List[str]] = None,
+    search: str = "",
+    limit: int = 20,
+) -> List[Dict[str, Any]]:
+    items = list(get_history())
+    if kinds:
+        ks = set(kinds)
+        items = [it for it in items if it.get("kind") in ks]
+    if tags:
+        tg = set(tags)
+        items = [it for it in items if tg.intersection(set(it.get("tags") or []))]
+    if search:
+        s = search.lower().strip()
+        items = [
+            it
+            for it in items
+            if s in json.dumps(it.get("payload", {})).lower()
+            or s in json.dumps(it.get("output", {})).lower()
+        ]
+    return items[:limit]
+
+
+# ----- import/export (.json) -----
+def export_json() -> bytes:
+    return json.dumps(get_history(), ensure_ascii=False, indent=2).encode("utf-8")
+
+
+def import_json_file(file) -> int:
+    """
+    Accepts a file-like from st.file_uploader. Returns appended count.
+    """
+    try:
+        content = file.read()
+        data = json.loads(content.decode("utf-8"))
+        if not isinstance(data, list):
+            return 0
+        _ensure_store()
+        before = len(st.session_state["history"])
+        # newest-first: bring imported items to the top, in their listed order
+        for it in reversed(data):
+            st.session_state["history"].insert(0, it)
+        return len(st.session_state["history"]) - before
+    except Exception:
+        return 0
