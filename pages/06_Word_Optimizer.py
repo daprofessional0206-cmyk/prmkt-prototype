@@ -15,7 +15,6 @@ def _safe_has_openai() -> bool:
         from shared.state import has_openai  # type: ignore
         return bool(has_openai())
     except Exception:
-        # best-effort check for secrets directly
         return "OPENAI_API_KEY" in st.secrets and bool(st.secrets["OPENAI_API_KEY"])
 
 def _safe_brand_rules() -> str:
@@ -59,6 +58,19 @@ def _safe_llm(prompt: str, temperature: float = 0.3, max_tokens: int = 900) -> s
         "• Avoid vague words (e.g., 'nice', 'great'); use specific outcomes (e.g., 'cut onboarding by 40%').\n"
         "• Add a clear CTA (e.g., 'Book a demo').\n"
     )
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Compat: rerun on old/new Streamlit
+# ──────────────────────────────────────────────────────────────────────────────
+def _rerun():
+    """Use st.rerun() if available; otherwise fall back gracefully."""
+    if hasattr(st, "rerun"):
+        st.rerun()
+    elif hasattr(st, "experimental_rerun"):
+        st.experimental_rerun()  # pragma: no cover
+    else:
+        # As a last resort, set a no-op flag so UI updates in-place
+        st.session_state["_force_refresh"] = True
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Page chrome
@@ -144,7 +156,7 @@ if "opt_suggestions" not in st.session_state:
 if btn_clear:
     st.session_state["opt_output"] = ""
     st.session_state["opt_suggestions"] = ""
-    st.experimental_rerun()
+    _rerun()
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Build prompts
