@@ -24,6 +24,14 @@ ui.page_title(
     "Phase 3.2 • Multi-page UI with: Company Profile, Strategy Ideas, Content Engine, Optimizer Tests, History & Insights",
 )
 
+st.page_link("pages/01_Company_Profile.py",  label="Open Company Profile →",    icon="🏢")
+st.page_link("pages/02_Strategy_Ideas.py",   label="Open Strategy Ideas →",     icon="💡")
+st.page_link("pages/03_Content_Engine.py",   label="Open Content Engine →",     icon="📰")
+st.page_link("pages/05_History_Insights.py", label="Open History & Insights →", icon="📊")
+st.page_link("pages/06_PR_Intelligence.py",  label="Open PR Intelligence →",    icon="🧭")
+st.page_link("pages/07_Creator_Intelligence.py", label="Open Creator Intelligence →", icon="🎬")
+st.page_link("pages/99_Admin_Settings.py",   label="Open Admin Settings →",     icon="🛠️")
+
 co = state.get_company()
 if co.name or co.industry or co.size:
     st.success(f"Active company: **{co.name or '—'}** · **{co.size or '—'}**")

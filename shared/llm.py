@@ -1,90 +1,95 @@
+# shared/llm.py — clean OpenAI client wrapper (no hardcoded keys)
+
 from __future__ import annotations
 import os
+from typing import Optional, Dict, Any
+
 import streamlit as st
 
-# Optional OpenAI import (graceful if missing)
+# Try OpenAI 1.x client
 try:
-    from openai import OpenAI
-except Exception:  # library not installed or incompatible
+    from openai import OpenAI  # pip install openai>=1.0.0
+    _HAS_OPENAI = True
+except Exception:
     OpenAI = None  # type: ignore
+    _HAS_OPENAI = False
 
 
-def is_openai_ready() -> bool:
-    return bool(st.secrets.get("openai_api_key") or os.getenv("OPENAI_API_KEY")) and OpenAI is not None
+_DEFAULT_MODEL = "gpt-4o-mini"
+_DEFAULT_SYSTEM = (
+    "You are an expert PR & Marketing copywriter. "
+    "Write clear, compelling, brand-safe copy. Keep facts generic unless provided. "
+    "Match the requested tone, audience, and length. Return only the copy."
+)
 
 
-def _client():
-    if not is_openai_ready():
-        return None
-    key = st.secrets.get("openai_api_key") or os.getenv("OPENAI_API_KEY")
-    # New OpenAI SDK client (>=1.0)
-    return OpenAI(api_key=key)
+def _get_api_key() -> Optional[str]:
+    # Prefer Streamlit secrets > env var
+    if "OPENAI_API_KEY" in st.secrets and st.secrets["OPENAI_API_KEY"]:
+        return st.secrets["OPENAI_API_KEY"]
+    return os.getenv("OPENAI_API_KEY")
 
 
-def _chat(system: str, user: str, n: int = 1):
+def has_key() -> bool:
+    return bool(_get_api_key())
+
+
+def online() -> bool:
+    """True if OpenAI client can be constructed."""
+    return _HAS_OPENAI and has_key()
+
+
+def _get_client() -> Any:
+    """Memoize client in session to avoid recreating."""
+    if "openai_client" not in st.session_state:
+        api_key = _get_api_key()
+        if not api_key or not _HAS_OPENAI:
+            raise RuntimeError("OpenAI not available: missing key or package.")
+        st.session_state["openai_client"] = OpenAI(api_key=api_key)
+    return st.session_state["openai_client"]
+
+
+def health() -> Dict[str, Any]:
+    return {
+        "openai_installed": _HAS_OPENAI,
+        "has_key": has_key(),
+        "online": online(),
+        "model_default": st.secrets.get("OPENAI_MODEL", _DEFAULT_MODEL) if hasattr(st, "secrets") else _DEFAULT_MODEL,
+    }
+
+
+def generate(
+    prompt: str,
+    system: Optional[str] = None,
+    temperature: float = 0.6,
+    max_tokens: int = 900,
+    model: Optional[str] = None,
+) -> str:
     """
-    Return (messages, error_text). messages is a list[str] with n completions.
-    On any issue it returns ([], 'error message').
+    Core text generation. Raises clean RuntimeError if anything fails
+    (so callers can show a friendly error).
     """
+    if not online():
+        raise RuntimeError("OpenAI is not configured (no key or package missing).")
+
+    _model = model or st.secrets.get("OPENAI_MODEL", _DEFAULT_MODEL)
+    _system = system or _DEFAULT_SYSTEM
+
     try:
-        cl = _client()
-        if cl is None:
-            return [], "OpenAI not configured or SDK unavailable."
-
-        model = st.secrets.get("openai_model") or os.getenv("OPENAI_MODEL") or "gpt-4o-mini"
-        resp = cl.chat.completions.create(
-            model=model,
-            messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
-            n=n,
-            temperature=0.7,
+        client = _get_client()
+        resp = client.chat.completions.create(
+            model=_model,
+            messages=[
+                {"role": "system", "content": _system},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=temperature,
+            max_tokens=max_tokens,
         )
-        outs = []
-        for ch in resp.choices:
-            txt = ch.message.content if hasattr(ch.message, "content") else ch.message.get("content", "")
-            outs.append(txt or "")
-        return outs, ""
+        content = (resp.choices[0].message.content or "").strip()
+        if not content:
+            raise RuntimeError("OpenAI returned empty content.")
+        return content
     except Exception as e:
-        return [], f"{type(e).__name__}: {e}"
-
-
-def strategy(goals: str, company, tone: str, length: str):
-    system = "You are a senior PR & marketing strategist. Produce one focused, practical initiative."
-    user = f"""
-Company: {company.name or '—'} (Industry: {company.industry or '—'}, Size: {company.size or '—'})
-Goals: {goals or company.goals or '—'}
-Tone: {tone}; Length: {length}
-Brand rules (if any): {company.brand_rules or '—'}
-
-Return a crisp idea with: Objective, Core concept, Channels, Why it fits the brand.
-"""
-    outs, err = _chat(system, user, n=1)
-    if outs:
-        return outs[0], ""
-    # fallback text
-    fallback = (
-        "Objective: Raise awareness among ICP this quarter.\n"
-        "Concept: Signature PR hook aligned with brand positioning.\n"
-        "Channels: Press outreach • Social • Blog • Email.\n"
-        "Why it fits: Matches voice and solves a key audience pain."
-    )
-    return fallback, err or "LLM unavailable."
-
-
-def variants(content_type: str, n_variants: int, company, tone: str, length: str, lang: str):
-    system = "You are a precise PR/marketing copywriter. Follow brand rules and format tightly."
-    user = f"""
-Content: {content_type}
-Company: {company.name or '—'} (Industry: {company.industry or '—'}, Size: {company.size or '—'})
-Tone: {tone}; Length: {length}; Language: {lang}
-Brand rules (if any): {company.brand_rules or '—'}
-
-Return {n_variants} numbered variants separated by clear headings.
-"""
-    outs, err = _chat(system, user, n=n_variants)
-    if outs:
-        return outs, ""
-    # fallback
-    fb = [
-        "Draft:\n• Opening line tailored to the audience.\n• Benefit/feature #1\n• Benefit/feature #2\n• Clear CTA",
-    ]
-    return fb, err or "LLM unavailable."
+        # Bubble up so the UI can show a clear message instead of silently falling back
+        raise RuntimeError(f"OpenAI error: {e!s}") from e
