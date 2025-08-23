@@ -1,95 +1,87 @@
-# shared/llm.py — clean OpenAI client wrapper (no hardcoded keys)
-
+# shared/llm.py
 from __future__ import annotations
+
 import os
-from typing import Optional, Dict, Any
+from typing import Optional, TYPE_CHECKING
 
-import streamlit as st
+if TYPE_CHECKING:
+    # For type checkers only, import the OpenAI type
+    from openai import OpenAI  # type: ignore
+else:
+    try:
+        # OpenAI SDK v1 (runtime)
+        from openai import OpenAI  # type: ignore
+    except Exception:  # pragma: no cover
+        OpenAI = None  # type: ignore
 
-# Try OpenAI 1.x client
-try:
-    from openai import OpenAI  # pip install openai>=1.0.0
-    _HAS_OPENAI = True
-except Exception:
-    OpenAI = None  # type: ignore
-    _HAS_OPENAI = False
-
-
-_DEFAULT_MODEL = "gpt-4o-mini"
-_DEFAULT_SYSTEM = (
-    "You are an expert PR & Marketing copywriter. "
-    "Write clear, compelling, brand-safe copy. Keep facts generic unless provided. "
-    "Match the requested tone, audience, and length. Return only the copy."
-)
-
+# --- API key helpers ---------------------------------------------------------
 
 def _get_api_key() -> Optional[str]:
-    # Prefer Streamlit secrets > env var
-    if "OPENAI_API_KEY" in st.secrets and st.secrets["OPENAI_API_KEY"]:
-        return st.secrets["OPENAI_API_KEY"]
-    return os.getenv("OPENAI_API_KEY")
+    """
+    Reads key from Streamlit secrets (preferred) or environment.
+    Works even if Streamlit isn't available.
+    """
+    # Try Streamlit secrets if available
+    try:  # don't hard-depend on streamlit at import time
+        import streamlit as st  # type: ignore
+        if "openai_api_key" in st.secrets:
+            key = str(st.secrets["openai_api_key"]).strip()
+            if key:
+                return key
+    except Exception:
+        pass
+
+    # Fallback: environment variable
+    key = os.getenv("OPENAI_API_KEY", "").strip()
+    return key or None
 
 
-def has_key() -> bool:
+def is_openai_ready() -> bool:
+    """Backward-compatible readiness check used by some pages."""
     return bool(_get_api_key())
 
 
-def online() -> bool:
-    """True if OpenAI client can be constructed."""
-    return _HAS_OPENAI and has_key()
+# --- Client factory ----------------------------------------------------------
+
+def _client() -> "OpenAI":
+    key = _get_api_key()
+    if not key:
+        raise RuntimeError(
+            "OpenAI API key missing. Set Streamlit secret `openai_api_key` "
+            "or env `OPENAI_API_KEY`."
+        )
+    if OpenAI is None:
+        raise RuntimeError(
+            "The `openai` package is not installed in this environment."
+        )
+    return OpenAI(api_key=key)
 
 
-def _get_client() -> Any:
-    """Memoize client in session to avoid recreating."""
-    if "openai_client" not in st.session_state:
-        api_key = _get_api_key()
-        if not api_key or not _HAS_OPENAI:
-            raise RuntimeError("OpenAI not available: missing key or package.")
-        st.session_state["openai_client"] = OpenAI(api_key=api_key)
-    return st.session_state["openai_client"]
+# --- Public LLM helpers ------------------------------------------------------
 
-
-def health() -> Dict[str, Any]:
-    return {
-        "openai_installed": _HAS_OPENAI,
-        "has_key": has_key(),
-        "online": online(),
-        "model_default": st.secrets.get("OPENAI_MODEL", _DEFAULT_MODEL) if hasattr(st, "secrets") else _DEFAULT_MODEL,
-    }
-
-
-def generate(
+def llm_copy(
     prompt: str,
-    system: Optional[str] = None,
-    temperature: float = 0.6,
-    max_tokens: int = 900,
-    model: Optional[str] = None,
+    *,
+    model: str = "gpt-4o-mini",
+    temperature: float = 0.7,
+    max_tokens: int = 800,
+    system: str = "You are an expert marketing & PR writing assistant. Keep output clean Markdown.",
 ) -> str:
     """
-    Core text generation. Raises clean RuntimeError if anything fails
-    (so callers can show a friendly error).
+    Minimal helper that returns a string completion for copy/ideas generation.
+    Raises with a clear message if the SDK/key isn’t configured.
     """
-    if not online():
-        raise RuntimeError("OpenAI is not configured (no key or package missing).")
+    client = _client()
 
-    _model = model or st.secrets.get("OPENAI_MODEL", _DEFAULT_MODEL)
-    _system = system or _DEFAULT_SYSTEM
-
-    try:
-        client = _get_client()
-        resp = client.chat.completions.create(
-            model=_model,
-            messages=[
-                {"role": "system", "content": _system},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
-        content = (resp.choices[0].message.content or "").strip()
-        if not content:
-            raise RuntimeError("OpenAI returned empty content.")
-        return content
-    except Exception as e:
-        # Bubble up so the UI can show a clear message instead of silently falling back
-        raise RuntimeError(f"OpenAI error: {e!s}") from e
+    # OpenAI SDK v1: chat.completions
+    resp = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": prompt},
+        ],
+        temperature=temperature,
+        max_tokens=max_tokens,
+    )
+    text = (resp.choices[0].message.content or "").strip()
+    return text
