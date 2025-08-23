@@ -119,7 +119,8 @@ st.page_link("pages/05_History_Insights.py",   label="History & Insights →",  
 st.page_link("pages/07_PR_Intelligence.py",  label="PR Intelligence (v1) →",  icon="📣")
 st.page_link("pages/08_Creator_Intelligence.py", label="Creator Intelligence (v1) →", icon="🎬")
 st.page_link("pages/09_Media_Monitor.py", label="Open Media Monitor →", icon="📺")
-
+st.page_link("pages/10_Campaign_Brief.py",   label="Open Campaign Brief →",     icon="🗂️")
+st.page_link("pages/99_Admin_Settings.py",   label="Open Admin Settings →",     icon="🛠️")
 # New Phase-3.4/3.5 pages
 st.page_link("pages/07_PR_Intelligence.py",    label="PR Intelligence (v1) →",      icon="🛰️")
 st.page_link("pages/08_Creator_Intelligence.py", label="Creator Intelligence (v1) →", icon="🎥")
