@@ -73,3 +73,15 @@ def import_json(text: str):
         return False, "JSON root must be a list."
     except Exception as e:
         return False, f"Invalid JSON: {e}"
+
+# Reusable: get latest item by type, or None if not found.
+from typing import Optional, Dict, Any, List
+
+def get_latest_by_type(type_name: str) -> Optional[Dict[str, Any]]:
+    hist: List[Dict[str, Any]] = st.session_state.get("history", [])
+    if not isinstance(hist, list):
+        return None
+    for item in reversed(hist):
+        if isinstance(item, dict) and item.get("type") == type_name:
+            return item
+    return None
