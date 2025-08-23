@@ -118,10 +118,7 @@ st.page_link("pages/04_Optimizer_Tests.py",    label="Optimizer Tests →",     
 st.page_link("pages/05_History_Insights.py",   label="History & Insights →",        icon="📊")
 st.page_link("pages/07_PR_Intelligence.py",  label="PR Intelligence (v1) →",  icon="📣")
 st.page_link("pages/08_Creator_Intelligence.py", label="Creator Intelligence (v1) →", icon="🎬")
-st.page_link("pages/09_Media_Monitor.py", label="Open Media Monitor →", icon="📡")
-
-
-st.page_link("pages/09_Media_Monitor.py",      label="Open Media Monitor →",        icon="📡")
+st.page_link("pages/09_Media_Monitor.py", label="Open Media Monitor →", icon="📺")
 
 # New Phase-3.4/3.5 pages
 st.page_link("pages/07_PR_Intelligence.py",    label="PR Intelligence (v1) →",      icon="🛰️")
