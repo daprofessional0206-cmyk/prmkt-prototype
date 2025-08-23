@@ -1,34 +1,50 @@
+# shared/state.py
 from __future__ import annotations
-import os
+from dataclasses import dataclass, asdict
+from typing import Dict, Any
 import streamlit as st
-from .types import Company
 
+@dataclass
+class Company:
+    name: str = "Acme Innovations"
+    industry: str = "Technology"
+    size: str = "Mid-market"
+    goals: str = "Increase qualified demand, accelerate sales cycles, reinforce brand trust…"
+    brand_rules: str = ""
 
-def init() -> None:
-    st.session_state.setdefault("company", Company())
-    st.session_state.setdefault("history", [])
-
+# ---- bootstrap ----
+def _ensure_bootstrap() -> None:
+    if "company" not in st.session_state:
+        st.session_state["company"] = asdict(Company())
+    if "history" not in st.session_state:
+        st.session_state["history"] = []
 
 def get_company() -> Company:
-    init()
-    co = st.session_state["company"]
-    if isinstance(co, dict):
-        co = Company(**co)
-        st.session_state["company"] = co
-    return co
+    _ensure_bootstrap()
+    c = st.session_state["company"]
+    if isinstance(c, dict):
+        return Company(**{**Company().__dict__, **c})
+    if isinstance(c, Company):
+        return c
+    return Company()
 
+def get_company_dict() -> Dict[str, Any]:
+    return dict(get_company().__dict__)
 
-def set_company(**kwargs) -> Company:
-    co = get_company()
-    for k, v in kwargs.items():
-        if hasattr(co, k):
-            setattr(co, k, v)
-    return co
-
+def set_company(**kwargs) -> None:
+    c = get_company().__dict__
+    c.update(kwargs)
+    st.session_state["company"] = c
 
 def get_brand_rules() -> str:
     return get_company().brand_rules or ""
 
+def set_brand_rules(text: str) -> None:
+    set_company(brand_rules=text or "")
 
 def has_openai() -> bool:
-    return bool(st.secrets.get("openai_api_key") or os.getenv("OPENAI_API_KEY"))
+    try:
+        key = st.secrets.get("OPENAI_API_KEY", "")
+    except Exception:
+        key = ""
+    return bool(key)

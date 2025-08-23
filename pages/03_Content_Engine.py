@@ -5,6 +5,7 @@ import streamlit as st
 from dataclasses import dataclass, asdict
 from datetime import datetime
 from typing import List
+from shared.exports import text_to_docx_bytes, text_to_pdf_bytes, df_to_csv_bytes, history_to_json_bytes
 
 # Optional shared imports; fallbacks if missing
 try:
