@@ -1,174 +1,85 @@
 # pages/06_Word_Optimizer.py
 from __future__ import annotations
-
 import streamlit as st
+from shared import state, history
 
-from shared import state
-from shared.llm import llm_copy
-from shared.history import add_history
+try:
+    from shared.llm import llm_copy
+    HAS_LLM = True
+except Exception:
+    HAS_LLM = False
 
-
-def _make_prompts(text: str, tone: str, lang: str) -> tuple[str, str]:
-    """Return (suggestions_prompt, rewrite_prompt)."""
-    suggestions_prompt = f"""
-You are a precise direct-response copy editor.
-Analyze the following copy and list 6–10 **specific** improvements as bullet points.
-Prefer strong action verbs (e.g., 'do'→'achieve', 'get'→'unlock'), remove filler,
-make outcomes concrete (numbers, %, timelines), and end with one clear CTA suggestion.
-Write bullets only — no preamble. Keep language: {lang}. Audience tone: {tone}.
-
-COPY:
-{text.strip()}
-    """.strip()
-
-    rewrite_prompt = f"""
-You are a senior conversion copywriter.
-Rewrite the copy below in {lang} with a {tone} tone.
-Keep the meaning and any facts, but:
-- replace weak verbs with strong action verbs,
-- remove vague words ('nice', 'great'),
-- make outcomes concrete (numbers, %, timelines) when implied,
-- tighten sentences,
-- keep formatting and line breaks.
-
-Output only the rewritten copy (no commentary).
-
-COPY:
-{text.strip()}
-    """.strip()
-
-    return suggestions_prompt, rewrite_prompt
-
-
-def _render_results():
-    """Show current outputs from session_state."""
-    left, right = st.columns(2)
-
-    with left:
-        st.subheader("Suggestions")
-        sug = st.session_state.get("wo_suggestions")
-        if sug:
-            st.markdown(sug)
-        else:
-            st.caption("No suggestions yet.")
-
-        st.download_button(
-            "Download suggestions (.txt)",
-            data=(sug or "").encode("utf-8"),
-            file_name="word_optimizer_suggestions.txt",
-            mime="text/plain",
-            disabled=not bool(sug),
-            use_container_width=True,
-        )
-
-    with right:
-        st.subheader("Rewritten Copy")
-        rw = st.session_state.get("wo_rewrite")
-        if rw:
-            st.markdown(rw)
-        else:
-            st.caption("No rewritten copy yet.")
-
-        st.download_button(
-            "Download rewritten copy (.txt)",
-            data=(rw or "").encode("utf-8"),
-            file_name="word_optimizer_rewrite.txt",
-            mime="text/plain",
-            disabled=not bool(rw),
-            use_container_width=True,
-        )
-
-
-# --- Page setup --------------------------------------------------------------
-
-st.set_page_config(page_title="Word Optimizer", page_icon="🧠", layout="wide")
-st.title("🧠 Word Optimizer")
-
+st.set_page_config(page_title="Presence • Word Optimizer", page_icon="🧠", layout="wide")
 state.init()
 co = state.get_company()
 
-# Inputs
-text = st.text_area(
-    "Paste copy to improve",
-    value=st.session_state.get("wo_text", ""),
-    height=160,
-    placeholder="Paste any paragraph, ad, landing page block, etc.",
-)
+st.title("🧠 Word Optimizer (Rewrite & Improve)")
+st.caption("Suggest stronger alternatives, clarity, and engagement improvements.")
 
-colA, colB = st.columns(2)
-with colA:
-    tone = st.selectbox(
-        "Tone",
-        ["Professional", "Friendly", "Bold", "Playful", "Luxury", "Direct", "Empathetic"],
-        index=0,
-    )
-with colB:
-    lang = st.selectbox("Language", ["English", "Spanish", "French", "German", "Hindi"], index=0)
+input_text = st.text_area("Paste your copy to improve", height=180, placeholder="Paste here...")
+goal = st.selectbox("Optimization goal", ["Clarity", "Persuasion", "SEO", "Engagement"])
+tone = st.selectbox("Target tone", ["Professional", "Friendly", "Bold", "Neutral"])
+lang = st.selectbox("Language", ["English", "Spanish", "French", "German", "Hindi", "Japanese"], index=0)
 
-st.session_state["wo_text"] = text
+prompt = f"""
+Rewrite the following copy for {goal} while keeping original meaning.
+Target tone: {tone}. Language: {lang}.
+Company: {co.get('name')} ({co.get('industry')}, {co.get('size')}).
+Brand rules: {co.get('brand_rules','(none)')}
 
-# Actions
-c1, c2, c3 = st.columns([1.2, 1.2, 1])
-suggest_btn = c1.button("Suggest Better Words", type="secondary", use_container_width=True)
-rewrite_btn = c2.button("Rewrite Now", type="primary", use_container_width=True)
-clear_btn = c3.button("Clear Output", use_container_width=True)
+Original copy:
+\"\"\"{input_text}\"\"\"
 
-if clear_btn:
-    st.session_state.pop("wo_suggestions", None)
-    st.session_state.pop("wo_rewrite", None)
-    st.success("Cleared.")
+Return only the improved version.
+"""
 
-# Guard
-if (suggest_btn or rewrite_btn) and not text.strip():
-    st.warning("Please paste some copy first.")
-    suggest_btn = rewrite_btn = False  # cancel actions
+col = st.columns(3)
+go = col[0].button("Rewrite", type="primary")
+suggest = col[1].button("Suggest stronger words")
+clear = col[2].button("Clear output")
 
-# Prompts
-if suggest_btn or rewrite_btn:
-    sug_prompt, rw_prompt = _make_prompts(text, tone, lang)
+if "optimizer_out" not in st.session_state:
+    st.session_state["optimizer_out"] = ""
 
-# Handle Suggest
-if suggest_btn:
-    try:
-        suggestions = llm_copy(sug_prompt)
-        # Small sanity fallback
-        if not suggestions.strip():
-            suggestions = (
-                "- Replace weak verbs with action verbs.\n"
-                "- Avoid vague language; make outcomes concrete.\n"
-                "- Add a clear CTA."
+if go:
+    if not input_text.strip():
+        st.warning("Paste some text first.")
+    else:
+        if HAS_LLM and state.has_openai():
+            out = llm_copy(prompt, temperature=0.4, max_tokens=600)
+        else:
+            out = input_text  # offline: echo (no-op)
+        st.session_state["optimizer_out"] = out
+        history.add(
+            kind="optimizer",
+            payload={"goal": goal, "tone": tone, "language": lang, "company": co},
+            output=out,
+            tags=["optimizer", goal, tone, lang],
+        )
+
+if suggest:
+    if not input_text.strip():
+        st.warning("Paste some text first.")
+    else:
+        if HAS_LLM and state.has_openai():
+            out = llm_copy(
+                f"Suggest stronger words/phrases for the following, keep meaning:\n\n{input_text}",
+                temperature=0.5,
+                max_tokens=400,
             )
-        st.session_state["wo_suggestions"] = suggestions
-
-        # History (positional args to match your helper signature)
-        add_history(
-            "word_optimizer",
-            {"action": "suggest", "tone": tone, "language": lang, "input": text},
-            {"suggestions": suggestions},
-            tags=["word_optimizer", "suggest", tone, lang],
+        else:
+            out = "• Improve verbs (e.g., “boost”, “streamline”) • Remove filler • Use active voice"
+        st.session_state["optimizer_out"] = out
+        history.add(
+            kind="optimizer",
+            payload={"goal": "Suggestions", "tone": tone, "language": lang, "company": co},
+            output=out,
+            tags=["optimizer", "suggestions", tone, lang],
         )
-        st.success("Suggestions generated.")
-    except Exception as e:
-        st.error(f"LLM error while generating suggestions: {e}")
 
-# Handle Rewrite
-if rewrite_btn:
-    try:
-        rewrite = llm_copy(rw_prompt)
-        if not rewrite.strip():
-            rewrite = text  # fallback: echo original
-        st.session_state["wo_rewrite"] = rewrite
+if clear:
+    st.session_state["optimizer_out"] = ""
+    st.experimental_rerun()  # ok to rerun here
 
-        add_history(
-            "word_optimizer",
-            {"action": "rewrite", "tone": tone, "language": lang, "input": text},
-            {"rewrite": rewrite},
-            tags=["word_optimizer", "rewrite", tone, lang],
-        )
-        st.success("Rewrite generated.")
-    except Exception as e:
-        st.error(f"LLM error while rewriting: {e}")
-
-# Results area
-st.markdown("### Results")
-_render_results()
+st.subheader("Output")
+st.markdown(st.session_state["optimizer_out"])

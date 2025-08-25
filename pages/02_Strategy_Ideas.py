@@ -1,81 +1,75 @@
 # pages/02_Strategy_Ideas.py
 from __future__ import annotations
 import streamlit as st
-
-from shared import state
-from shared.history import add_history
-from shared.llm import llm_copy  # your existing helper (online/offline inside)
-from shared.exports import text_to_docx_bytes, text_to_pdf_bytes  # new export helpers
+from shared import state, history
+from typing import List
+from datetime import datetime
+# LLM
+try:
+    from shared.llm import llm_copy
+    HAS_LLM = True
+except Exception:
+    HAS_LLM = False
 
 st.set_page_config(page_title="Presence • Strategy Ideas", page_icon="💡", layout="wide")
+state.init()
 
 st.title("💡 Strategy Ideas")
 st.caption("Brainstorm bold PR & marketing angles quickly.")
 
-co = state.get_company_dict()
+co = state.get_company()
 
 with st.expander("Company context", expanded=False):
-    st.write(
-        f"**Name:** {co['name']}  \n"
-        f"**Industry:** {co['industry']}  \n"
-        f"**Size:** {co['size']}  \n"
-        f"**Goals:** {co['goals']}"
-    )
-
-col1, col2 = st.columns([1, 1])
-with col1:
-    tone = st.selectbox("Tone", ["Professional", "Conversational", "Bold"], index=0, key="si_tone")
-with col2:
-    length = st.selectbox("Length", ["Short", "Medium"], index=1, key="si_len")
+    st.write(f"**Name:** {co.get('name')}")
+    st.write(f"**Industry:** {co.get('industry')}, **Size:** {co.get('size')}")
+    st.write(f"**Goals:** {co.get('goals')}")
 
 goals = st.text_area(
-    "Business goals (edit if needed)",
+    "Business goals (edit as needed)",
     value=co.get("goals", ""),
     height=90,
-    key="si_goals",
 )
 
-if st.button("Generate Strategy Idea", type="primary", use_container_width=True):
-    prompt = f"""
-You are an expert PR/Marketing strategist. Propose a practical initiative for:
-- Company: {co['name']} (Industry: {co['industry']}, Size: {co['size']})
-- Business goals: {goals}
+tone = st.selectbox("Tone", ["Professional", "Bold", "Friendly", "Neutral"], index=0)
+length = st.selectbox("Length", ["Short", "Medium", "Long"], index=1)
+primary_channel = st.selectbox("Primary channel", ["PR", "LinkedIn", "Email", "Blog", "Instagram", "YouTube"])
 
-Output a brief plan in {length.lower()} length and {tone.lower()} tone:
-- Headline
-- Rationale
-- Primary channel(s)
-- 4–6 bullet tactics
-- Success metrics
-""".strip()
+prompt = f"""
+Propose a practical PR/Marketing initiative for {co.get('name')} ({co.get('industry')}, size: {co.get('size')}).
+Goals: {goals}.
+Output a concise plan (5–7 bullets) with headline, rationale, primary channel, and success metrics.
+Tone: {tone}. Length: {length}. Primary channel: {primary_channel}.
+"""
 
+if st.button("Generate strategy idea", type="primary"):
     try:
-        idea = llm_copy(prompt, temperature=0.5, max_tokens=400)
+        if HAS_LLM and state.has_openai():
+            idea = llm_copy(prompt, temperature=0.55, max_tokens=420)
+        else:
+            idea = (
+                f"**Campaign Idea: “Momentum Now”**\n"
+                f"- **Rationale:** Convert in-market demand with fast, helpful education.\n"
+                f"- **Primary channel:** {primary_channel}.\n"
+                f"- **Tactics:** Rapid Q&A posts, 2 customer mini-stories, founder AMAs.\n"
+                f"- **Measurement:** CTR, demo requests, 30-day retention.\n"
+                f"- **Notes:** Align tone to {co.get('size','').lower()} buyers in {co.get('industry','').lower()}."
+            )
         st.success("Strategy idea created.")
         st.markdown(idea)
 
-        add_history(
+        # Unified history entry
+        history.add(
             kind="strategy",
-            payload={"tone": tone, "length": length, "goals": goals, "company": co},
+            payload={
+                "company": co,
+                "tone": tone,
+                "length": length,
+                "primary_channel": primary_channel,
+                "goals": goals,
+                "ts": datetime.now().isoformat(timespec="seconds")
+            },
             output=idea,
-            tags=["strategy", tone, length],
+            tags=["strategy", primary_channel, tone, length]
         )
-
-        # Downloads
-        c1, c2 = st.columns(2)
-        with c1:
-            st.download_button(
-                "Download .docx",
-                data=text_to_docx_bytes(idea, title="Strategy Idea"),
-                file_name="strategy_idea.docx",
-                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            )
-        with c2:
-            st.download_button(
-                "Download .pdf",
-                data=text_to_pdf_bytes(idea, title="Strategy Idea"),
-                file_name="strategy_idea.pdf",
-                mime="application/pdf",
-            )
     except Exception as e:
-        st.error(f"{e}")
+        st.error(f"Error generating idea: {e}")
