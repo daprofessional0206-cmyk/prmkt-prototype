@@ -1,80 +1,47 @@
+# pages/09_Media_Monitor.py
 from __future__ import annotations
-
 import streamlit as st
-from shared import state
-from shared.history import add_history
+from shared import state, history
 
-# Try to import feedparser but don't crash if it's missing
-FEED_OK = True
-FEED_ERR = ""
-try:
-    import feedparser  # type: ignore
-except Exception as e:  # ImportError or anything else
-    FEED_OK = False
-    FEED_ERR = str(e)
-
-st.set_page_config(page_title="Media Monitor", page_icon="📡", layout="wide")
-st.title("📡 Media Monitor (v1)")
-st.caption("Paste RSS/Atom feeds (newsrooms, PR wires, blogs). Filter by keywords. Click **Check now** to pull latest.")
+st.set_page_config(page_title="Media Monitor", page_icon="📰", layout="wide")
+st.title("📰 Media Monitor (v1)")
+st.caption("Paste RSS/Atom feed URLs; filter by keywords. (Lightweight local demo.)")
 
 state.init()
 
-default_feeds = (
-    "https://news.google.com/rss\n"
-    "https://feeds.feedburner.com/Techcrunch\n"
+urls = st.text_area(
+    "Feed URLs (one per line)",
+    value="https://news.google.com/rss",
+    height=100,
 )
-
-urls = st.text_area("Feed URLs (one per line)", value=default_feeds, height=120)
 keywords = st.text_input("Filter keywords (comma-separated)", value="")
-limit = st.slider("Max items per feed", 3, 20, 5)
+limit = st.slider("Max items per feed", 1, 50, 10)
 
-col_a, col_b = st.columns([1, 1])
-with col_a:
-    do = st.button("Check now", type="primary", disabled=not FEED_OK)
-with col_b:
-    if st.button("Clear Output"):
-        st.session_state.pop("monitor_md", None)
-        st.rerun()
-
-if not FEED_OK:
-    st.error(
-        "The optional dependency **feedparser** is not available, so the checker is disabled.\n\n"
-        "Install it locally with `pip install feedparser` and ensure `requirements.txt` "
-        "contains `feedparser>=6.0.10`. Then redeploy."
-    )
-
-if do and FEED_OK:
-    keys = [k.strip().lower() for k in keywords.split(",") if k.strip()]
-    lines: list[str] = []
-    for raw in urls.splitlines():
-        u = raw.strip()
-        if not u:
-            continue
-        try:
-            feed = feedparser.parse(u)
-            title = getattr(feed, "feed", {}).get("title", u)
-            lines.append(f"\n### {title}\n")
+if st.button("Fetch", use_container_width=True):
+    try:
+        import feedparser  # optional, local only
+    except Exception:
+        st.warning("Install `feedparser` in requirements.txt for live parsing. Showing placeholder.")
+        st.write("- Example Item 1: Placeholder because `feedparser` not installed.")
+        st.write("- Example Item 2: Placeholder because `feedparser` not installed.")
+    else:
+        kws = [k.strip().lower() for k in keywords.split(",") if k.strip()]
+        for u in [u.strip() for u in urls.splitlines() if u.strip()]:
+            d = feedparser.parse(u)
+            st.subheader(u)
             shown = 0
-            for entry in getattr(feed, "entries", []):
-                text = f"{entry.get('title','')}\n{entry.get('summary','')}"
-                if keys and not any(k in text.lower() for k in keys):
+            for e in d.entries:
+                title = e.get("title","")
+                if kws and not any(k in title.lower() for k in kws):
                     continue
-                link = entry.get("link", "")
-                item_title = entry.get("title", "(no title)")
-                lines.append(f"- [{item_title}]({link})")
+                st.markdown(f"- **{title}**")
                 shown += 1
                 if shown >= limit:
                     break
-        except Exception as e:
-            lines.append(f"- *(error parsing {u}: {e})*")
-
-    md = "\n".join(lines) if lines else "_No items found._"
-    st.session_state["monitor_md"] = md
-    add_history("monitor", {"keywords": keywords, "limit": limit}, md, tags=["monitor"])
-
-st.markdown(st.session_state.get("monitor_md", ""))
-
-st.info(
-    "To make this automatic later: run a small cron/worker that fetches feeds and writes "
-    "results to your history store (Phase 4)."
-)
+    history.add(
+        tool="Media Monitor",
+        payload={"urls": urls, "keywords": keywords, "limit": limit},
+        output="ok",
+        tags=["media-monitor"],
+        meta={},
+    )
