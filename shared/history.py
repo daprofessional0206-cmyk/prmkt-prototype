@@ -1,49 +1,64 @@
 # shared/history.py
 from __future__ import annotations
-import streamlit as st
-from typing import List, Dict, Any
-from datetime import datetime, timezone
 import json
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Sequence
+
+import streamlit as st
+import pandas as pd
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.utcnow().isoformat(timespec="seconds") + "Z"
 
-def get_history() -> List[Dict[str, Any]]:
-    return st.session_state.setdefault("history", [])
+def _ensure() -> None:
+    if "history" not in st.session_state:
+        st.session_state["history"] = []  # type: List[Dict[str, Any]]
 
-def clear() -> None:
-    st.session_state["history"] = []
+def add_history(
+    item_type: str,
+    payload: Optional[Dict[str, Any]] = None,
+    output: Optional[Any] = None,
+    tags: Optional[Sequence[str]] = None,
+    **kwargs: Any,
+) -> None:
+    """
+    Flexible logger. Accepts both the new signature and old variants:
+      - add_history(type, {"...payload..."}, output, tags=[...])
+      - add_history(type, input={...}, result=..., tags=[...])
+    Everything becomes a dict row: {ts,type,payload,output,tags}
+    """
+    _ensure()
 
-def add(kind: str, payload: Dict[str, Any], output: Any, tags: List[str] | None = None) -> None:
-    """Unified shape for all history entries."""
-    hist = get_history()
-    entry = {
+    # Back-compat with callers that used input=/result=/data= etc.
+    if payload is None:
+        payload = kwargs.get("input") or kwargs.get("data") or {}
+    if output is None:
+        output = kwargs.get("result") or kwargs.get("content") or kwargs.get("text")
+
+    row = {
         "ts": _now_iso(),
-        "kind": kind,                    # e.g., "strategy", "content", "optimizer"
-        "payload": payload or {},        # always a dict
-        "output": output,                # string or list[str]
-        "tags": tags or [],              # list of strings
+        "type": item_type,
+        "payload": payload or {},
+        "output": output if output is not None else "",
+        "tags": list(tags) if tags else [],
     }
-    hist.insert(0, entry)
-    del hist[50:]  # keep it light
+    st.session_state["history"].insert(0, row)  # newest first, cap later if needed
 
 def export_json() -> str:
-    return json.dumps(get_history(), ensure_ascii=False, indent=2)
+    _ensure()
+    return json.dumps(st.session_state["history"], ensure_ascii=False, indent=2)
 
-def import_json(text: str) -> None:
-    try:
-        items = json.loads(text)
-        if isinstance(items, list):
-            st.session_state["history"] = items[:50]
-        else:
-            st.warning("JSON must be a list.")
-    except Exception as e:
-        st.error(f"Invalid JSON: {e}")
+def clear() -> None:
+    _ensure()
+    st.session_state["history"].clear()
 
-def filtered(kind: str | None = None, tag: str | None = None) -> List[Dict[str, Any]]:
-    data = list(get_history())
-    if kind:
-        data = [d for d in data if d.get("kind") == kind]
-    if tag:
-        data = [d for d in data if tag in (d.get("tags") or [])]
-    return data
+def last_n(n: int = 20) -> List[Dict[str, Any]]:
+    _ensure()
+    return st.session_state["history"][:n]
+
+def dataframe(limit: int = 20) -> pd.DataFrame:
+    _ensure()
+    rows = last_n(limit)
+    if not rows:
+        return pd.DataFrame(columns=["ts", "type", "payload", "output", "tags"])
+    return pd.DataFrame(rows)

@@ -1,41 +1,67 @@
 # shared/state.py
 from __future__ import annotations
 import streamlit as st
-from typing import Dict, Any
+from typing import Any, Dict
+
+# ---- Compat shim: Streamlit renamed experimental_rerun -> rerun ----
+# If any page still calls st.experimental_rerun, keep it working.
+if not hasattr(st, "experimental_rerun"):
+    st.experimental_rerun = st.rerun  # type: ignore[attr-defined]
+
+class DotDict(dict):
+    """
+    Dict that also allows attribute access (obj.key) and safe missing keys.
+    Also provides .asdict() for callers that expect dataclasses.asdict().
+    """
+    def __getattr__(self, key: str) -> Any:
+        return self.get(key, "")
+    def __setattr__(self, key: str, value: Any) -> None:
+        self[key] = value
+    def asdict(self) -> Dict[str, Any]:  # dataclass-like
+        return dict(self)
+
+def _default_company() -> DotDict:
+    return DotDict({
+        "name": "",
+        "industry": "",
+        "size": "",
+        "audience": "",
+        "goals": "",
+        "brand_voice": "",
+    })
 
 def init() -> None:
-    """Idempotent init of session keys."""
+    """Idempotent session bootstrap."""
     ss = st.session_state
-    ss.setdefault("company", {
-        "name": "Acme Innovations",
-        "industry": "Technology",
-        "size": "Mid-market",
-        "goals": "Increase qualified demand, accelerate sales cycles, reinforce brand trust…",
-        "audience": "Decision-makers",
-        "brand_rules": "Avoid superlatives like 'best-ever'. Use 'customers' not 'clients'.",
-        "language": "English",
-    })
-    ss.setdefault("history", [])
-    ss.setdefault("last_gen_ts", 0.0)
+    ss.setdefault("company", _default_company())
+    ss.setdefault("openai_ok", False)
+    ss.setdefault("history", [])  # list of dicts; used by shared.history
 
-def get_company() -> Dict[str, Any]:
+def get_company() -> DotDict:
+    """Return a DotDict so pages can use co['x'] or co.x interchangeably."""
     init()
-    return st.session_state["company"]
+    co = st.session_state.get("company")
+    # If something overwrote it with a plain dict, wrap again:
+    if isinstance(co, dict) and not isinstance(co, DotDict):
+        co = DotDict(co)
+        st.session_state["company"] = co
+    if co is None:
+        co = _default_company()
+        st.session_state["company"] = co
+    return co  # DotDict
 
-def set_company(updates: Dict[str, Any]) -> None:
+def set_company(data: Dict[str, Any]) -> None:
     init()
-    st.session_state["company"].update(updates)
-
-def get_brand_rules() -> str:
-    return get_company().get("brand_rules", "")
-
-def set_brand_rules(text: str) -> None:
-    set_company({"brand_rules": text})
+    st.session_state["company"] = DotDict(data)
 
 def has_openai() -> bool:
-    """True when OPENAI_API_KEY is present in secrets."""
-    try:
-        val = st.secrets.get("OPENAI_API_KEY", "")
-        return bool(val)
-    except Exception:
-        return False
+    init()
+    return bool(st.session_state.get("openai_ok", False))
+
+def set_openai_ready(ok: bool) -> None:
+    init()
+    st.session_state["openai_ok"] = bool(ok)
+
+def get_history() -> list:
+    init()
+    return st.session_state["history"]
