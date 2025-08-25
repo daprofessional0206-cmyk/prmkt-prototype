@@ -2,7 +2,7 @@
 from __future__ import annotations
 import json
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, cast
 
 import streamlit as st
 import pandas as pd
@@ -12,7 +12,14 @@ def _now_iso() -> str:
 
 def _ensure() -> None:
     if "history" not in st.session_state:
-        st.session_state["history"] = []  # type: List[Dict[str, Any]]
+        st.session_state["history"] = cast(List[Dict[str, Any]], [])
+
+# ---- API expected by pages ---------------------------------------------------
+
+def get_history() -> List[Dict[str, Any]]:
+    """Return the full in-memory history list (newest first)."""
+    _ensure()
+    return st.session_state["history"]
 
 def add_history(
     item_type: str,
@@ -22,18 +29,15 @@ def add_history(
     **kwargs: Any,
 ) -> None:
     """
-    Flexible logger. Accepts both the new signature and old variants:
-      - add_history(type, {"...payload..."}, output, tags=[...])
-      - add_history(type, input={...}, result=..., tags=[...])
-    Everything becomes a dict row: {ts,type,payload,output,tags}
+    Flexible logger. Works with old and new call styles:
+      add_history(type, payload, output, tags=[...])
+      add_history(type, input={...}, result=..., tags=[...])
     """
     _ensure()
-
-    # Back-compat with callers that used input=/result=/data= etc.
     if payload is None:
         payload = kwargs.get("input") or kwargs.get("data") or {}
     if output is None:
-        output = kwargs.get("result") or kwargs.get("content") or kwargs.get("text")
+        output  = kwargs.get("result") or kwargs.get("content") or kwargs.get("text")
 
     row = {
         "ts": _now_iso(),
@@ -42,7 +46,7 @@ def add_history(
         "output": output if output is not None else "",
         "tags": list(tags) if tags else [],
     }
-    st.session_state["history"].insert(0, row)  # newest first, cap later if needed
+    st.session_state["history"].insert(0, row)  # newest first
 
 def export_json() -> str:
     _ensure()
