@@ -1,53 +1,36 @@
 # pages/99_Admin_Settings.py
 from __future__ import annotations
-import io
-import pandas as pd
 import streamlit as st
+import io, pandas as pd
+from shared import ui, state, history
 
-from shared import state
-# ── Sidebar health badge (safe) ───────────────────────────────────────────────
-import streamlit as st
-try:
-    from shared import state
-    with st.sidebar:
-        st.write(f"OpenAI: {'✅ Connected' if state.has_openai() else '❌ Missing'}")
-except Exception:
-    # Never crash the page if the helper isn't available
-    with st.sidebar:
-        st.write("OpenAI: status unavailable")
+ui.page_title("Admin & Settings", "Keys, dataset utilities, and maintenance.")
+state.init()
 
-# Optional dataset helpers (won't crash if missing)
-try:
-    from shared.datasets import ensure_sample_dataset, load_csv  # type: ignore
-except Exception:  # helpers absent? make no-ops
-    def ensure_sample_dataset() -> None: ...
-    def load_csv(path: str) -> pd.DataFrame | None:
+# OpenAI
+st.subheader("OpenAI")
+st.write(f"Connected: {'✅' if state.has_openai() else '❌ (offline templates)'}")
+st.caption("Keys live in Streamlit secrets, not in code.")
+
+# Dataset tools (optional; safe no-ops if not present)
+st.subheader("Dataset tools (optional)")
+with st.expander("Upload a CSV to preview (session only)"):
+    uploaded = st.file_uploader("CSV", type=["csv"])
+    if uploaded:
         try:
-            return pd.read_csv(path)
-        except Exception:
-            return None
+            df = pd.read_csv(io.BytesIO(uploaded.getvalue()))
+            st.dataframe(df.head(50), use_container_width=True)
+        except Exception as e:
+            st.error(f"Failed: {e}")
 
-st.set_page_config(page_title="Admin Settings", page_icon="🛠️", layout="wide")
-st.title("Admin Settings")
+# History maintenance
+st.subheader("History maintenance")
+c1, c2 = st.columns(2)
+with c1:
+    st.write(f"Items in history: **{len(history.get_history())}**")
+with c2:
+    if st.button("Clear history", type="primary"):
+        st.session_state["history"] = []
+        st.success("History cleared.")
 
-# --- OpenAI status ---
-openai_ok = state.has_openai()
-st.write(f"**OpenAI:** {'✅ Connected' if openai_ok else '❌ Missing key'}")
-st.caption(
-    "Set your key as Streamlit secret `openai_api_key` (preferred) or environment variable `OPENAI_API_KEY`. "
-    "After updating secrets, use **Manage app → Reboot → Clear cache**."
-)
-
-with st.expander("How to set the key (quick reference)"):
-    st.markdown(
-        """
-**Streamlit Cloud:**
-1. Click **⋮ → Manage app** (top-right) → **Secrets**
-2. Add:
-```yaml
-openai_api_key: sk-...
-    """
-)
-# ── Footer ────────────────────────────────────────────────────────────────────
-import streamlit as st  # safe if already imported
-st.caption("Presence — multi-page prototype (Phase 3.2 • build v3.2)")
+st.caption("Presence — multi-page prototype (Phase 3 Stabilize Pack)")

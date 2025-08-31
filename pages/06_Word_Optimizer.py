@@ -1,91 +1,45 @@
 # pages/06_Word_Optimizer.py
 from __future__ import annotations
-
 import streamlit as st
-from shared import state, ui, llm, history
+from shared import ui, state, history
+from shared.llm import llm_copy
 
-st.set_page_config(page_title="Word Optimizer", page_icon="🔤", layout="wide")
 state.init()
+ui.page_title("Word Optimizer", "Rewrite + suggest stronger wording (Grammarly++ vibe).")
 
-ui.page_title("Word Optimizer", "Rewrite copy and suggest higher-performing wording.")
+co = state.get_company()
+goal = st.selectbox("Goal", ["Clarity","Persuasion","SEO","Trust"], index=1)
+tone = st.selectbox("Tone", ["Professional","Friendly","Bold","Neutral"], index=0)
+lang = st.selectbox("Language", ["English","Spanish","French","German"], index=0)
 
-src = st.text_area("Your copy", height=200, placeholder="Paste text here…")
-col1, col2, col3 = st.columns(3)
-with col1:
-    goal = st.selectbox("Goal", ["Click-throughs", "Sign-ups", "Purchases", "Engagement"], index=0)
-with col2:
-    tone = st.selectbox("Tone", ["Professional", "Friendly", "Bold", "Conversational"], index=0)
-with col3:
-    lang = st.selectbox("Language", ["English", "Spanish", "French", "German", "Hindi", "Japanese"], index=0)
+src = st.text_area("Paste your copy", height=180, value="Acme RoboHub 2.0 speeds onboarding and lowers costs for modern teams.")
+c1, c2, c3 = st.columns(3)
+with c1:
+    do_rewrite = st.button("Rewrite")
+with c2:
+    do_suggest = st.button("Suggest better words")
+with c3:
+    clear = st.button("Clear output")
 
-left, right = st.columns([1, 1])
+if "wo_out" not in st.session_state:
+    st.session_state["wo_out"] = ""
 
-with left:
-    if st.button("🔁 Rewrite for Goal", use_container_width=True, disabled=not src.strip()):
-        prompt = f"""
-Rewrite the following copy in {lang} with a {tone.lower()} tone to maximize {goal.lower()}.
-Keep meaning, improve clarity and persuasion. Output only the rewritten copy.
+if do_rewrite:
+    prompt = f"Rewrite the following in {lang}, tone {tone}, optimized for {goal}. Keep it concise.\n\nText:\n{src}"
+    out = llm_copy(prompt, temperature=0.55, max_tokens=400)
+    st.session_state["wo_out"] = out
+    history.add("optimizer", out, {"mode":"rewrite","src":src,"tone":tone,"goal":goal,"lang":lang},
+                tags=["optimizer","rewrite", goal, tone, lang], meta={"company": co.name})
 
-Text:
-{src}
-""".strip()
-        try:
-            if state.has_openai():
-                out = llm.call(prompt, max_tokens=600, temperature=0.6)
-            else:
-                out = (
-                    "Draft (offline):\n"
-                    "• Opening line tailored to the audience.\n"
-                    "• Benefit/feature #1\n"
-                    "• Benefit/feature #2\n"
-                    "• Clear CTA"
-                )
-            st.success("Rewritten.")
-            st.markdown(out)
-            history.add(
-                kind="optimizer",
-                text=out,
-                payload={"prompt": prompt, "original": src, "goal": goal, "tone": tone, "language": lang},
-                tags=["optimizer", goal, tone, lang],
-                tool="Word Optimizer",
-                meta={"company": state.get_company().name if hasattr(state.get_company(), "name") else ""},
-            )
-        except Exception as e:
-            st.error(str(e))
+if do_suggest:
+    prompt = f"Suggest 10 stronger word/phrase replacements (term → replacement) in {lang}, tone {tone}, for this text:\n{src}"
+    out = llm_copy(prompt, temperature=0.5, max_tokens=400)
+    st.session_state["wo_out"] = out
+    history.add("optimizer", out, {"mode":"suggest","src":src,"tone":tone,"goal":goal,"lang":lang},
+                tags=["optimizer","suggestions", tone, lang], meta={"company": co.name})
 
-with right:
-    if st.button("💡 Suggest Better Words", use_container_width=True, disabled=not src.strip()):
-        prompt = f"""
-Suggest better words/phrases in {lang} for the copy below to improve {goal.lower()}.
-Return a short bullet list: “Replace → With (why)”.
+if clear:
+    st.session_state["wo_out"] = ""
 
-Copy:
-{src}
-""".strip()
-        try:
-            if state.has_openai():
-                out = llm.call(prompt, max_tokens=500, temperature=0.4)
-            else:
-                out = (
-                    "- “innovative solution” → “faster way to ___” (concrete benefit)\n"
-                    "- “industry-leading” → “SOC2 Type II verified” (specific proof)"
-                )
-            st.success("Suggestions ready.")
-            st.markdown(out)
-            history.add(
-                kind="optimizer",
-                text=out,
-                payload={"prompt": prompt, "original": src, "goal": goal, "tone": tone, "language": lang},
-                tags=["optimizer", "suggestions", tone, lang],
-                tool="Word Optimizer",
-                meta={"company": state.get_company().name if hasattr(state.get_company(), "name") else ""},
-            )
-        except Exception as e:
-            st.error(str(e))
-
-st.divider()
-if st.button("🧹 Clear input/output"):
-    for k in list(st.session_state.keys()):
-        if k.startswith("text") or k.startswith("textarea") or k.startswith("markdown"):
-            st.session_state.pop(k, None)
-    st.rerun()
+st.markdown("### Output")
+st.markdown(st.session_state["wo_out"])
