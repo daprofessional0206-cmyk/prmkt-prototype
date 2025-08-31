@@ -1,49 +1,63 @@
 # shared/history.py
 from __future__ import annotations
 from typing import Any, Dict, List, Optional
-import json
-import time
-import pandas as pd
+from datetime import datetime
 import streamlit as st
 
-_KEY = "history"
+# Store history in session; each item:
+# { ts, kind, text, payload, tags, tool, meta }
+def _now_iso() -> str:
+    return datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
-def _ensure() -> None:
-    if _KEY not in st.session_state:
-        st.session_state[_KEY] = []  # newest first
+def get_history() -> List[Dict[str, Any]]:
+    return st.session_state.setdefault("history", [])
 
 def add(
-    tool: str,
-    payload: Dict[str, Any],
-    output: Any,
+    *,
+    kind: str,
+    text: str,
+    payload: Optional[Dict[str, Any]] = None,
     tags: Optional[List[str]] = None,
+    tool: Optional[str] = None,
     meta: Optional[Dict[str, Any]] = None,
 ) -> None:
-    _ensure()
-    st.session_state[_KEY].insert(0, {
-        "ts": int(time.time()),
-        "tool": tool,
-        "payload": payload,
-        "output": output,
+    item = {
+        "ts": _now_iso(),
+        "kind": kind,
+        "text": text,
+        "payload": payload or {},
         "tags": tags or [],
+        "tool": tool or "",
         "meta": meta or {},
-    })
+    }
+    hist = get_history()
+    hist.insert(0, item)
+    # keep last 100
+    del hist[100:]
 
-def get() -> pd.DataFrame:
-    _ensure()
-    items = st.session_state[_KEY]
-    if not items:
-        return pd.DataFrame(columns=["ts", "tool", "payload", "output", "tags", "meta"])
-    return pd.DataFrame(items)
+def export_json() -> str:
+    import json
+    return json.dumps(get_history(), ensure_ascii=False, indent=2)
 
-def clear() -> None:
-    _ensure()
-    st.session_state[_KEY] = []
+def import_json(json_text: str) -> None:
+    import json
+    try:
+        data = json.loads(json_text)
+        if isinstance(data, list):
+            st.session_state["history"] = data[:100]
+        else:
+            st.warning("History JSON must be a list.")
+    except Exception as e:
+        st.error(f"Failed to import history: {e}")
 
-def count() -> int:
-    _ensure()
-    return len(st.session_state[_KEY])
+def filtered(kind_whitelist: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+    items = list(get_history())
+    if kind_whitelist:
+        items = [i for i in items if i.get("kind") in set(kind_whitelist)]
+    return items
 
-def export_json(pretty: bool = True) -> str:
-    _ensure()
-    return json.dumps(st.session_state[_KEY], indent=2 if pretty else None, ensure_ascii=False)
+def latest_by_kind(kind: str) -> Optional[Dict[str, Any]]:
+    for i in get_history():
+        if i.get("kind") == kind:
+            return i
+    return None

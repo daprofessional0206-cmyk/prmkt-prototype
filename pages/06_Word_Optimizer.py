@@ -1,85 +1,91 @@
 # pages/06_Word_Optimizer.py
 from __future__ import annotations
+
 import streamlit as st
-from shared import state, history
+from shared import state, ui, llm, history
 
-try:
-    from shared.llm import llm_copy
-    HAS_LLM = True
-except Exception:
-    HAS_LLM = False
-
-st.set_page_config(page_title="Presence • Word Optimizer", page_icon="🧠", layout="wide")
+st.set_page_config(page_title="Word Optimizer", page_icon="🔤", layout="wide")
 state.init()
-co = state.get_company()
 
-st.title("🧠 Word Optimizer (Rewrite & Improve)")
-st.caption("Suggest stronger alternatives, clarity, and engagement improvements.")
+ui.page_title("Word Optimizer", "Rewrite copy and suggest higher-performing wording.")
 
-input_text = st.text_area("Paste your copy to improve", height=180, placeholder="Paste here...")
-goal = st.selectbox("Optimization goal", ["Clarity", "Persuasion", "SEO", "Engagement"])
-tone = st.selectbox("Target tone", ["Professional", "Friendly", "Bold", "Neutral"])
-lang = st.selectbox("Language", ["English", "Spanish", "French", "German", "Hindi", "Japanese"], index=0)
+src = st.text_area("Your copy", height=200, placeholder="Paste text here…")
+col1, col2, col3 = st.columns(3)
+with col1:
+    goal = st.selectbox("Goal", ["Click-throughs", "Sign-ups", "Purchases", "Engagement"], index=0)
+with col2:
+    tone = st.selectbox("Tone", ["Professional", "Friendly", "Bold", "Conversational"], index=0)
+with col3:
+    lang = st.selectbox("Language", ["English", "Spanish", "French", "German", "Hindi", "Japanese"], index=0)
 
-prompt = f"""
-Rewrite the following copy for {goal} while keeping original meaning.
-Target tone: {tone}. Language: {lang}.
-Company: {co.get('name')} ({co.get('industry')}, {co.get('size')}).
-Brand rules: {co.get('brand_rules','(none)')}
+left, right = st.columns([1, 1])
 
-Original copy:
-\"\"\"{input_text}\"\"\"
+with left:
+    if st.button("🔁 Rewrite for Goal", use_container_width=True, disabled=not src.strip()):
+        prompt = f"""
+Rewrite the following copy in {lang} with a {tone.lower()} tone to maximize {goal.lower()}.
+Keep meaning, improve clarity and persuasion. Output only the rewritten copy.
 
-Return only the improved version.
-"""
-
-col = st.columns(3)
-go = col[0].button("Rewrite", type="primary")
-suggest = col[1].button("Suggest stronger words")
-clear = col[2].button("Clear output")
-
-if "optimizer_out" not in st.session_state:
-    st.session_state["optimizer_out"] = ""
-
-if go:
-    if not input_text.strip():
-        st.warning("Paste some text first.")
-    else:
-        if HAS_LLM and state.has_openai():
-            out = llm_copy(prompt, temperature=0.4, max_tokens=600)
-        else:
-            out = input_text  # offline: echo (no-op)
-        st.session_state["optimizer_out"] = out
-        history.add(
-            kind="optimizer",
-            payload={"goal": goal, "tone": tone, "language": lang, "company": co},
-            output=out,
-            tags=["optimizer", goal, tone, lang],
-        )
-
-if suggest:
-    if not input_text.strip():
-        st.warning("Paste some text first.")
-    else:
-        if HAS_LLM and state.has_openai():
-            out = llm_copy(
-                f"Suggest stronger words/phrases for the following, keep meaning:\n\n{input_text}",
-                temperature=0.5,
-                max_tokens=400,
+Text:
+{src}
+""".strip()
+        try:
+            if state.has_openai():
+                out = llm.call(prompt, max_tokens=600, temperature=0.6)
+            else:
+                out = (
+                    "Draft (offline):\n"
+                    "• Opening line tailored to the audience.\n"
+                    "• Benefit/feature #1\n"
+                    "• Benefit/feature #2\n"
+                    "• Clear CTA"
+                )
+            st.success("Rewritten.")
+            st.markdown(out)
+            history.add(
+                kind="optimizer",
+                text=out,
+                payload={"prompt": prompt, "original": src, "goal": goal, "tone": tone, "language": lang},
+                tags=["optimizer", goal, tone, lang],
+                tool="Word Optimizer",
+                meta={"company": state.get_company().name if hasattr(state.get_company(), "name") else ""},
             )
-        else:
-            out = "• Improve verbs (e.g., “boost”, “streamline”) • Remove filler • Use active voice"
-        st.session_state["optimizer_out"] = out
-        history.add(
-            kind="optimizer",
-            payload={"goal": "Suggestions", "tone": tone, "language": lang, "company": co},
-            output=out,
-            tags=["optimizer", "suggestions", tone, lang],
-        )
+        except Exception as e:
+            st.error(str(e))
 
-if clear:
-    st.session_state["optimizer_out"] = ""
-    st.experimental_rerun()  # ok to rerun here
+with right:
+    if st.button("💡 Suggest Better Words", use_container_width=True, disabled=not src.strip()):
+        prompt = f"""
+Suggest better words/phrases in {lang} for the copy below to improve {goal.lower()}.
+Return a short bullet list: “Replace → With (why)”.
 
-st.subheader("Output")
-st.markdown(st.session_state["optimizer_out"])
+Copy:
+{src}
+""".strip()
+        try:
+            if state.has_openai():
+                out = llm.call(prompt, max_tokens=500, temperature=0.4)
+            else:
+                out = (
+                    "- “innovative solution” → “faster way to ___” (concrete benefit)\n"
+                    "- “industry-leading” → “SOC2 Type II verified” (specific proof)"
+                )
+            st.success("Suggestions ready.")
+            st.markdown(out)
+            history.add(
+                kind="optimizer",
+                text=out,
+                payload={"prompt": prompt, "original": src, "goal": goal, "tone": tone, "language": lang},
+                tags=["optimizer", "suggestions", tone, lang],
+                tool="Word Optimizer",
+                meta={"company": state.get_company().name if hasattr(state.get_company(), "name") else ""},
+            )
+        except Exception as e:
+            st.error(str(e))
+
+st.divider()
+if st.button("🧹 Clear input/output"):
+    for k in list(st.session_state.keys()):
+        if k.startswith("text") or k.startswith("textarea") or k.startswith("markdown"):
+            st.session_state.pop(k, None)
+    st.rerun()
