@@ -1,89 +1,93 @@
 # shared/exports.py
 from __future__ import annotations
 from typing import Iterable, Optional
-import os
-import re
+from io import BytesIO
+from pathlib import Path
 
-from fpdf import FPDF
+# ---- internal helpers (import lazily so import-time never crashes) ----
+def _import_fpdf():
+    try:
+        from fpdf import FPDF  # type: ignore
+        return FPDF
+    except Exception as e:
+        raise RuntimeError(
+            "PDF export requires the 'fpdf' package. Add 'fpdf2' to requirements.txt and reinstall."
+        ) from e
 
-# -------- Font setup --------
-HERE = os.path.dirname(__file__)
-FONT_DIR = os.path.join(HERE, "fonts", "dejavu")  # you already created this
+def _dejavu_path() -> Optional[Path]:
+    """
+    Return path to DejaVuSans.ttf if present at shared/fonts/dejavu/DejaVuSans.ttf
+    """
+    here = Path(__file__).parent
+    p = here / "fonts" / "dejavu" / "DejaVuSans.ttf"
+    return p if p.exists() else None
 
-_REG_SPACES = re.compile(r"[ \t\u00A0\u2000-\u200D\u202F\u205F\u3000]+")
+def _normalize_text(text: str) -> list[str]:
+    # Normalize to unix newlines, keep empty lines (they become spacing)
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    return text.split("\n")
 
-def _ensure_fonts(pdf: FPDF) -> None:
-    """
-    Register DejaVu fonts once per FPDF instance.
-    """
-    pdf.add_font("DejaVu", "", os.path.join(FONT_DIR, "DejaVuSans.ttf"), uni=True)
-    bold = os.path.join(FONT_DIR, "DejaVuSans-Bold.ttf")
-    ital = os.path.join(FONT_DIR, "DejaVuSans-Oblique.ttf")
-    if os.path.exists(bold):
-        pdf.add_font("DejaVu", "B", bold, uni=True)
-    if os.path.exists(ital):
-        pdf.add_font("DejaVu", "I", ital, uni=True)
-
-def _clean_line(s: str) -> str:
-    """
-    FPDF can choke on some zero-width / exotic spaces; normalize them.
-    """
-    if not s:
-        return ""
-    s = s.replace("\r", "")
-    # normalize all “odd” spaces to a single space
-    s = _REG_SPACES.sub(" ", s)
-    return s
-
-def text_to_pdf_bytes(text: str, title: Optional[str] = None) -> bytes:
-    """
-    Render plain text to a simple A4 PDF with sane margins and Unicode font.
-    """
-    pdf = FPDF(format="A4")
-    pdf.set_auto_page_break(True, margin=14)
-    pdf.set_margins(left=14, top=16, right=14)
+# ---- public: TXT → PDF bytes (Unicode safe when font exists) ----
+def text_to_pdf_bytes(text: str) -> bytes:
+    FPDF = _import_fpdf()
+    pdf = FPDF(orientation="P", unit="mm", format="A4")
+    pdf.set_auto_page_break(auto=True, margin=12)
     pdf.add_page()
 
-    _ensure_fonts(pdf)
-    pdf.set_font("DejaVu", size=12)
+    # Try Unicode font first
+    djv = _dejavu_path()
+    if djv:
+        pdf.add_font("DejaVu", "", str(djv))
+        pdf.set_font("DejaVu", size=11)
+        encode_none = False
+    else:
+        # Fallback to core Latin-1 font and replace unsupported chars
+        pdf.set_font("Arial", size=11)
+        text = text.encode("latin-1", "replace").decode("latin-1")
+        encode_none = True  # output() already returns latin-1 str
 
-    # Optional title
-    if title:
-        pdf.set_font("DejaVu", "B", size=14)
-        pdf.multi_cell(w=pdf.epw, h=7, txt=_clean_line(title))
-        pdf.ln(3)
-        pdf.set_font("DejaVu", size=12)
+    # Left/right margins ~12mm; MultiCell width 0 = remaining printable width
+    pdf.set_left_margin(12)
+    pdf.set_right_margin(12)
 
-    # Effective printable width (A4: ~210mm - margins)
-    # FPDF exposes epw (effective page width) in recent versions:
-    try:
-        eff_w = pdf.epw  # type: ignore[attr-defined]
-    except Exception:
-        eff_w = pdf.w - pdf.l_margin - pdf.r_margin
-
-    for raw_line in (text or "").split("\n"):
-        line = _clean_line(raw_line)
+    for line in _normalize_text(text):
         if line.strip() == "":
-            pdf.ln(4)
-        else:
-            pdf.multi_cell(w=eff_w, h=6, txt=line)
+            pdf.ln(4)   # vertical spacer
+            continue
+        # width=0 means full available width (prevents the “not enough space” error)
+        pdf.multi_cell(w=0, h=6, txt=line)
 
-    raw = pdf.output(dest="S")
-    # FPDF<2.7 returns str; newer returns bytes/bytearray
-    if isinstance(raw, (bytes, bytearray)):
-        return bytes(raw)
-    return raw.encode("latin-1")
+    # Return bytes; FPDF.output() returns latin-1 str
+    out_str = pdf.output(dest="S")
+    return out_str.encode("latin-1") if encode_none else out_str.encode("latin-1")
 
-# ---------- small helper used by Content Engine ----------
+# ---- public: TXT → DOCX bytes ----
+def text_to_docx_bytes(text: str) -> bytes:
+    try:
+        from docx import Document  # type: ignore
+    except Exception as e:
+        raise RuntimeError(
+            "DOCX export requires the 'python-docx' package. Add 'python-docx' to requirements.txt and reinstall."
+        ) from e
+
+    doc = Document()
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    # Split into paragraphs on blank lines
+    paragraphs = [p.strip() for p in text.split("\n\n")]
+    for p in paragraphs:
+        doc.add_paragraph(p if p else "")
+
+    bio = BytesIO()
+    doc.save(bio)
+    return bio.getvalue()
+
+# ---- public: join multiple variants with readable separators ----
 def join_variants(variants: Iterable[str], divider: Optional[str] = None) -> str:
-    """
-    Utility: merge A/B/C variants for exporting. Adds a friendly divider.
-    """
-    joined: list[str] = []
+    blocks: list[str] = []
     for i, v in enumerate(variants, start=1):
         title = f"Variant {i}"
-        block = f"{title}\n{'-'*len(title)}\n{v.strip()}"
-        joined.append(block)
+        header = f"{title}\n{'-' * len(title)}"
+        blocks.append(f"{header}\n{v.strip()}")
     if divider is None:
         divider = "\n\n" + ("-" * 60) + "\n\n"
-    return divider.join(joined)
+    return divider.join(blocks)

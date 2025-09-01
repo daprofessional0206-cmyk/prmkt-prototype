@@ -1,43 +1,40 @@
 # shared/history.py
 from __future__ import annotations
-import streamlit as st
-from datetime import datetime, timezone
-from typing import Any, Dict, List
 import json
+import time
+from typing import Any, Dict, List
+import streamlit as st
 
-def _now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+_KEY = "presence_history_v1"
 
-def get_history() -> List[Dict[str, Any]]:
-    return st.session_state.setdefault("history", [])
+def _ensure() -> None:
+    if _KEY not in st.session_state:
+        st.session_state[_KEY] = []  # list[dict]
 
-def add(kind: str, text: str, payload: Dict[str, Any] | None = None,
-        tags: List[str] | None = None, meta: Dict[str, Any] | None = None) -> None:
-    item = {
-        "ts": _now(),
-        "kind": kind,
-        "text": text,
-        "payload": payload or {},
-        "tags": tags or [],
-        "meta": meta or {},
-    }
-    hist = get_history()
-    hist.insert(0, item)
-    del hist[200:]  # keep last 200
+def add(kind: str, content: str, meta: Dict[str, Any] | None = None, tags: List[str] | None = None) -> None:
+    """Append a history item."""
+    _ensure()
+    st.session_state[_KEY].append(
+        {
+            "ts": time.time(),
+            "kind": kind,
+            "content": content,
+            "meta": meta or {},
+            "tags": tags or [],
+        }
+    )
 
-def export_json_str() -> str:
-    return json.dumps(get_history(), ensure_ascii=False, indent=2)
+# for backward-compat with pages that import add_history
+add_history = add
 
-def import_json_str(blob: str) -> None:
-    try:
-        items = json.loads(blob)
-        if isinstance(items, list):
-            st.session_state["history"] = items[:200]
-    except Exception:
-        pass
+def get() -> List[Dict[str, Any]]:
+    _ensure()
+    return st.session_state[_KEY]
 
-def latest_by_kind(kind: str) -> Dict[str, Any] | None:
-    for it in get_history():
-        if it.get("kind") == kind:
-            return it
-    return None
+def clear() -> None:
+    _ensure()
+    st.session_state[_KEY] = []
+
+def export_json() -> str:
+    """Return the entire history as a UTF-8 JSON string."""
+    return json.dumps(get(), ensure_ascii=False, indent=2)
