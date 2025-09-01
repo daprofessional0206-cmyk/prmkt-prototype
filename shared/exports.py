@@ -1,113 +1,89 @@
 # shared/exports.py
 from __future__ import annotations
-from io import BytesIO
-from typing import Iterable
-import unicodedata
+from typing import Iterable, Optional
+import os
+import re
 
 from fpdf import FPDF
 
-try:
-    from docx import Document  # python-docx
-except Exception:  # pragma: no cover
-    Document = None
+# -------- Font setup --------
+HERE = os.path.dirname(__file__)
+FONT_DIR = os.path.join(HERE, "fonts", "dejavu")  # you already created this
 
+_REG_SPACES = re.compile(r"[ \t\u00A0\u2000-\u200D\u202F\u205F\u3000]+")
 
-# -------- helpers --------
+def _ensure_fonts(pdf: FPDF) -> None:
+    """
+    Register DejaVu fonts once per FPDF instance.
+    """
+    pdf.add_font("DejaVu", "", os.path.join(FONT_DIR, "DejaVuSans.ttf"), uni=True)
+    bold = os.path.join(FONT_DIR, "DejaVuSans-Bold.ttf")
+    ital = os.path.join(FONT_DIR, "DejaVuSans-Oblique.ttf")
+    if os.path.exists(bold):
+        pdf.add_font("DejaVu", "B", bold, uni=True)
+    if os.path.exists(ital):
+        pdf.add_font("DejaVu", "I", ital, uni=True)
 
-_REPLACEMENTS = {
-    "“": '"', "”": '"', "„": '"',
-    "‘": "'", "’": "'", "‚": "'",
-    "—": "-", "–": "-", "-": "-",
-    "•": "-", "·": "-", "●": "-",
-    "\u00A0": " ",  # nbsp
-}
-
-def _replace_chars(s: str) -> str:
+def _clean_line(s: str) -> str:
+    """
+    FPDF can choke on some zero-width / exotic spaces; normalize them.
+    """
     if not s:
-        return s
-    for bad, good in _REPLACEMENTS.items():
-        s = s.replace(bad, good)
+        return ""
+    s = s.replace("\r", "")
+    # normalize all “odd” spaces to a single space
+    s = _REG_SPACES.sub(" ", s)
     return s
 
-def _pdf_safe(text: str) -> str:
+def text_to_pdf_bytes(text: str, title: Optional[str] = None) -> bytes:
     """
-    Make text safe for core FPDF fonts:
-    - replace common Unicode punctuation
-    - normalize and drop codepoints outside latin-1
+    Render plain text to a simple A4 PDF with sane margins and Unicode font.
     """
-    if not text:
-        return ""
-    text = _replace_chars(text)
-    # NFKD then encode latin-1 (drop non-latin), then back to str
-    text = unicodedata.normalize("NFKD", text)
-    return text.encode("latin-1", "ignore").decode("latin-1")
-
-
-# -------- public API --------
-
-def text_to_pdf_bytes(text: str, title: str | None = None) -> bytes:
-    """
-    Convert plain text to a lightweight PDF (A4).
-    Uses core Helvetica (latin-1) for maximum compatibility.
-    """
-    safe = _pdf_safe(text)
-
-    pdf = FPDF(orientation="P", unit="mm", format="A4")
-    pdf.set_auto_page_break(auto=True, margin=15)
-    pdf.set_margins(left=15, top=15, right=15)
+    pdf = FPDF(format="A4")
+    pdf.set_auto_page_break(True, margin=14)
+    pdf.set_margins(left=14, top=16, right=14)
     pdf.add_page()
 
+    _ensure_fonts(pdf)
+    pdf.set_font("DejaVu", size=12)
+
+    # Optional title
     if title:
-        pdf.set_font("Helvetica", "B", 14)
-        pdf.multi_cell(w=0, h=8, txt=_pdf_safe(title))
-        pdf.ln(2)
+        pdf.set_font("DejaVu", "B", size=14)
+        pdf.multi_cell(w=pdf.epw, h=7, txt=_clean_line(title))
+        pdf.ln(3)
+        pdf.set_font("DejaVu", size=12)
 
-    pdf.set_font("Helvetica", size=11)
+    # Effective printable width (A4: ~210mm - margins)
+    # FPDF exposes epw (effective page width) in recent versions:
+    try:
+        eff_w = pdf.epw  # type: ignore[attr-defined]
+    except Exception:
+        eff_w = pdf.w - pdf.l_margin - pdf.r_margin
 
-    # Split into lines and write as wrapped paragraphs
-    for raw_line in safe.splitlines():
-        line = raw_line.rstrip()
+    for raw_line in (text or "").split("\n"):
+        line = _clean_line(raw_line)
         if line.strip() == "":
-            pdf.ln(6)
+            pdf.ln(4)
         else:
-            # 0 width means “use remaining line width”
-            pdf.multi_cell(w=0, h=6, txt=line)
+            pdf.multi_cell(w=eff_w, h=6, txt=line)
 
-    # Return bytes (latin-1 string per FPDF API)
-    return pdf.output(dest="S").encode("latin-1")
+    raw = pdf.output(dest="S")
+    # FPDF<2.7 returns str; newer returns bytes/bytearray
+    if isinstance(raw, (bytes, bytearray)):
+        return bytes(raw)
+    return raw.encode("latin-1")
 
-
-def text_to_docx_bytes(text: str, title: str | None = None) -> bytes:
+# ---------- small helper used by Content Engine ----------
+def join_variants(variants: Iterable[str], divider: Optional[str] = None) -> str:
     """
-    Convert text to a .docx document.
-    Requires python-docx.
+    Utility: merge A/B/C variants for exporting. Adds a friendly divider.
     """
-    if Document is None:
-        raise ImportError(
-            "DOCX export requires the 'python-docx' package. "
-            "Add 'python-docx' to requirements.txt and reinstall."
-        )
-
-    doc = Document()
-    if title:
-        doc.add_heading(title, level=1)
-
-    # Keep the text readable in Word (don’t drop Unicode here)
-    for line in text.splitlines():
-        if line.strip() == "":
-            doc.add_paragraph()
-        else:
-            doc.add_paragraph(line)
-
-    bio = BytesIO()
-    doc.save(bio)
-    return bio.getvalue()
-
-
-def text_to_txt_bytes(text: str) -> bytes:
-    return (text or "").encode("utf-8")
-
-
-def iter_to_pdf_bytes(lines: Iterable[str], title: str | None = None) -> bytes:
-    """Optional: build PDF from an iterable of lines."""
-    return text_to_pdf_bytes("\n".join(lines), title=title)
+    joined: list[str] = []
+    for i, v in enumerate(variants, start=1):
+        title = f"Variant {i}"
+        block = f"{title}\n{'-'*len(title)}\n{v.strip()}"
+        joined.append(block)
+    if divider is None:
+        divider = "\n\n" + ("-" * 60) + "\n\n"
+    return divider.join(joined)
