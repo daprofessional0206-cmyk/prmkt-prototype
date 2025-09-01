@@ -1,48 +1,36 @@
-# pages/07_PR_Intelligence.py
+# pages/07_PR_Intelligence.py (top part only – rest of your page can stay)
 from __future__ import annotations
 import streamlit as st
-from shared import state, llm, history
 
-st.set_page_config(page_title="PR Intelligence", page_icon="📣", layout="wide")
+from shared import state
+from shared.llm import llm_copy
+from shared.history import add_history
+
+def co_val(co, key: str, default: str = "") -> str:
+    """Read from dataclass or dict safely."""
+    if co is None:
+        return default
+    try:
+        v = getattr(co, key)
+        return "" if v is None else str(v)
+    except Exception:
+        try:
+            v = co.get(key, default)  # type: ignore[union-attr]
+            return "" if v is None else str(v)
+        except Exception:
+            return default
+
+st.set_page_config(page_title="PR Intelligence (v1)", page_icon="📣")
 st.title("📣 PR Intelligence (v1)")
 st.caption("Get press-worthy story angles, target beats, timing windows, and one-line pitches.")
 
 state.init()
 co = state.get_company()
 
-timing = st.selectbox("Timing preference", ["ASAP (next 7 days)", "Soon (2–4 weeks)", "This quarter", "No specific timing"], index=1)
+timing = st.selectbox("Timing preference", ["ASAP (next 7 days)", "Soon (2–4 weeks)", "This quarter", "No specific timing"])
 
-if "pri_output" not in st.session_state:
-    st.session_state["pri_output"] = ""
+st.write(
+    f"**Context** — Company: {co_val(co, 'name')} | Industry: {co_val(co, 'industry')} | Audience: {co_val(co, 'audience')}"
+)
 
-c1, c2 = st.columns([1,1])
-with c1:
-    if st.button("Generate PR Insights", use_container_width=True):
-        prompt = f"""You are an elite PR strategist.
-Company: {co.get('name','')} | Industry: {co.get('industry','')} | Audience: {co.get('audience','')}
-Brand voice: {co.get('brand_voice','')} | Timing: {timing}
-
-Deliver:
-- 3 press-worthy story angles (headline + 2 lines)
-- Suggested journalist beats/outlets
-- Ideal timing windows
-- One-line pitch for each.
-"""
-        try:
-            out = llm.llm_copy(prompt)
-            st.session_state["pri_output"] = out
-            history.add(
-                tool="PR Intelligence",
-                payload={"timing": timing, "company": co},
-                output=out,
-                tags=["pr-intel", timing],
-                meta={"company": co.get("name","N/A")},
-            )
-        except Exception as e:
-            st.error(e)
-with c2:
-    if st.button("Clear Output", use_container_width=True):
-        st.session_state["pri_output"] = ""
-
-if st.session_state["pri_output"]:
-    st.markdown(st.session_state["pri_output"])
+# ... keep your existing body/generation UI below ...
