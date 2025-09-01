@@ -5,6 +5,8 @@ from shared import ui, state, history
 from shared.llm import llm_copy
 from shared.exports import text_to_docx_bytes, text_to_pdf_bytes
 
+# downloads are shown after generation (see below) to avoid referencing `out` before it's defined
+
 state.init()
 ui.page_title("Strategy Ideas", "Brainstorm bold PR & marketing angles quickly.")
 

@@ -5,6 +5,24 @@ from shared import ui, state, history
 from shared.llm import llm_copy
 from shared.exports import text_to_docx_bytes, text_to_pdf_bytes
 
+# helper to join a list of variant strings into a single printable string
+def join_variants(variants_list):
+    if not variants_list:
+        return ""
+    return ("\n\n" + ("—"*40) + "\n\n").join(variants_list)
+
+# assume variants = [v1, v2, v3]
+variants = []  # placeholder; this will be overwritten later by user input
+joined = join_variants(variants)
+
+st.download_button(
+    "Download A/B/C (.pdf)",
+    data=text_to_pdf_bytes(joined, title="Content Engine — A/B/C"),
+    file_name="content_variants.pdf",
+    mime="application/pdf",
+    use_container_width=True,
+)
+
 state.init()
 ui.page_title("Content Engine (A/B/C)", "Generate press releases, ads, posts, emails, landing pages.")
 
