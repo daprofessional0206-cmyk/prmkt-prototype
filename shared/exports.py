@@ -1,90 +1,122 @@
 # shared/exports.py
 from __future__ import annotations
-from typing import Iterable, Optional
-from io import BytesIO
-from pathlib import Path
+from typing import Iterable, Optional, List
+import io
+import os
 
-def _import_fpdf():
-    try:
-        from fpdf import FPDF  # type: ignore
-        return FPDF
-    except Exception as e:
-        raise RuntimeError(
-            "PDF export requires the 'fpdf2' package. Add 'fpdf2' to requirements.txt and reinstall."
-        ) from e
+try:
+    from fpdf import FPDF
+except Exception:  # fpdf not installed
+    FPDF = None
 
-def _dejavu_path() -> Optional[Path]:
-    here = Path(__file__).parent
-    p = here / "fonts" / "dejavu" / "DejaVuSans.ttf"
-    return p if p.exists() else None
+try:
+    from docx import Document  # python-docx
+except Exception:
+    Document = None
 
-def _normalize_text(text: str) -> list[str]:
-    text = text.replace("\r\n", "\n").replace("\r", "\n")
-    return text.split("\n")
 
-# --- TXT → PDF bytes (now accepts optional title=) ---
-def text_to_pdf_bytes(text: str, title: Optional[str] = None) -> bytes:
-    FPDF = _import_fpdf()
-    pdf = FPDF(orientation="P", unit="mm", format="A4")
-    pdf.set_auto_page_break(auto=True, margin=12)
+def _find_dejavu() -> Optional[str]:
+    """
+    Try to locate a DejaVuSans*.ttf we saved under shared/fonts or shared/fonts/dejavu.
+    Returns a file path or None.
+    """
+    here = os.path.dirname(__file__)
+    candidates: List[str] = []
+    # local bundle
+    candidates.append(os.path.join(here, "fonts", "DejaVuSans.ttf"))
+    # subfolder bundle (recommended)
+    candidates.append(os.path.join(here, "fonts", "dejavu", "DejaVuSans.ttf"))
+    # system-ish fallbacks
+    candidates.append(os.path.expanduser("~/.fonts/DejaVuSans.ttf"))
+    candidates.append("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
+
+    for p in candidates:
+        if os.path.isfile(p):
+            return p
+    return None
+
+
+def text_to_pdf_bytes(text: str, title: str = "Document") -> bytes:
+    """
+    Robust PDF exporter:
+      - Handles Unicode (adds DejaVuSans Unicode font if available)
+      - Wraps long lines
+      - Avoids 'Not enough horizontal space...' error
+
+    Requires `fpdf`. If missing, we return a tiny PDF-like message.
+    """
+    if FPDF is None:
+        return b"PDF export requires the 'fpdf' package."
+
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
 
-    # Use DejaVu (Unicode) if provided; else Arial + latin-1 replacement
-    djv = _dejavu_path()
-    if djv:
-        pdf.add_font("DejaVu", "", str(djv))
-        pdf.set_font("DejaVu", size=12)
-        encode_none = False
+    # Try to enable Unicode
+    font_path = _find_dejavu()
+    if font_path:
+        try:
+            pdf.add_font("DejaVu", "", font_path, uni=True)
+            pdf.set_font("DejaVu", size=12)
+        except Exception:
+            pdf.set_font("Arial", size=12)
     else:
         pdf.set_font("Arial", size=12)
-        text = text.encode("latin-1", "replace").decode("latin-1")
-        if title:
-            title = title.encode("latin-1", "replace").decode("latin-1")
-        encode_none = True
 
-    pdf.set_left_margin(12)
-    pdf.set_right_margin(12)
+    try:
+        pdf.set_title(title)
+    except Exception:
+        pass
 
-    # Optional heading
-    if title:
-        pdf.set_font_size(14)
-        pdf.multi_cell(w=0, h=7, txt=title)
-        pdf.ln(2)
-        pdf.set_font_size(12)
-
-    for line in _normalize_text(text):
+    # Write lines with safe wrapping
+    for raw in (text or "").splitlines():
+        line = raw.replace("\t", "    ")
         if line.strip() == "":
-            pdf.ln(4)
+            # blank line => vertical space
+            pdf.ln(6)
             continue
+        # width=0 means take full width minus margins; height=6 is a nice leading
         pdf.multi_cell(w=0, h=6, txt=line)
 
-    out_str = pdf.output(dest="S")
-    return out_str.encode("latin-1") if encode_none else out_str.encode("latin-1")
+    # fpdf.output(dest="S") returns str in some versions, bytes in others
+    out = pdf.output(dest="S")
+    return out if isinstance(out, (bytes, bytearray)) else out.encode("latin-1", "ignore")
 
-# --- TXT → DOCX bytes ---
-def text_to_docx_bytes(text: str) -> bytes:
-    try:
-        from docx import Document  # type: ignore
-    except Exception as e:
-        raise RuntimeError(
-            "DOCX export requires the 'python-docx' package. Add 'python-docx' to requirements.txt and reinstall."
-        ) from e
+
+def text_to_docx_bytes(text: str, title: str = "Document") -> bytes:
+    """
+    Create a simple .docx with a heading and paragraphs.
+    Requires `python-docx`. If missing, returns a .txt-ish fallback in bytes.
+    """
+    if Document is None:
+        return (f"{title}\n\n{text}").encode("utf-8")
 
     doc = Document()
-    text = text.replace("\r\n", "\n").replace("\r", "\n")
-    for para in text.split("\n\n"):
-        doc.add_paragraph(para.strip() if para else "")
-    bio = BytesIO()
-    doc.save(bio)
-    return bio.getvalue()
+    if title:
+        doc.add_heading(title, level=1)
 
-# --- Join A/B/C variants with a neat divider ---
+    for raw in (text or "").splitlines():
+        if raw.strip() == "":
+            doc.add_paragraph("")  # blank line
+        else:
+            doc.add_paragraph(raw)
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
 def join_variants(variants: Iterable[str], divider: Optional[str] = None) -> str:
-    blocks: list[str] = []
+    """
+    Utility: merge A/B/C variants for exporting. Adds a friendly divider.
+    """
+    joined: List[str] = []
     for i, v in enumerate(variants, start=1):
         title = f"Variant {i}"
-        header = f"{title}\n{'-' * len(title)}"
-        blocks.append(f"{header}\n{v.strip()}")
+        block = f"{title}\n{'-'*len(title)}\n{(v or '').strip()}"
+        joined.append(block)
+
     if divider is None:
         divider = "\n\n" + ("-" * 60) + "\n\n"
-    return divider.join(blocks)
+
+    return divider.join(joined)

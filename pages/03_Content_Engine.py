@@ -1,88 +1,99 @@
 # pages/03_Content_Engine.py
 from __future__ import annotations
 import streamlit as st
-from shared import ui, state, history
+
+from shared import state, history
 from shared.llm import llm_copy
-from shared.exports import text_to_docx_bytes, text_to_pdf_bytes
+from shared.exports import text_to_pdf_bytes, text_to_docx_bytes, join_variants
 
-# helper to join a list of variant strings into a single printable string
-def join_variants(variants_list):
-    if not variants_list:
-        return ""
-    return ("\n\n" + ("—"*40) + "\n\n").join(variants_list)
-
-# assume variants = [v1, v2, v3]
-variants = []  # placeholder; this will be overwritten later by user input
-joined = join_variants(variants)
-
-st.download_button(
-    "Download A/B/C (.pdf)",
-    data=text_to_pdf_bytes(joined, title="Content Engine — A/B/C"),
-    file_name="content_variants.pdf",
-    mime="application/pdf",
-    use_container_width=True,
-)
+st.set_page_config(page_title="Content Engine", page_icon="📰", layout="wide")
+st.title("📰 Content Engine")
 
 state.init()
-ui.page_title("Content Engine (A/B/C)", "Generate press releases, ads, posts, emails, landing pages.")
+co = state.get_company()  # may be dict or a simple object
 
-co = state.get_company()
-
-left, right = st.columns(2)
-with left:
-    content_type = st.selectbox("Content Type", ["Press Release","Ad","Social Post","Landing Page","Email"])
-    platform = st.selectbox("Platform (if relevant)", ["Generic","LinkedIn","Instagram","X/Twitter","YouTube","Search Ad"])
-    topic = st.text_input("Topic / Offer", value="Launch of Acme RoboHub 2.0")
-    bullets = st.text_area("Key points (one per line)", value="2× faster setup\nSOC 2 Type II\nSave 30% cost", height=110)
-with right:
-    tone = st.selectbox("Tone", ["Professional","Friendly","Bold","Neutral"], index=0)
-    length = st.selectbox("Length", ["Short","Medium","Long"], index=1)
-    audience = st.text_input("Audience", value="Decision-makers")
-    cta = st.text_input("Call to Action", value="Book a demo")
-
-brand_rules = state.get_brand_rules()
-col3, col4 = st.columns([2,1])
-with col3:
-    lang = st.selectbox("Language", ["English","Spanish","French","German","Hindi","Japanese"], index=0)
-with col4:
-    variants = st.number_input("Variants (A/B/C)", min_value=1, max_value=3, value=2, step=1)
-
-if st.button("Generate Variants", type="primary"):
-    bullet_lines = "\n".join([f"- {b.strip()}" for b in bullets.splitlines() if b.strip()]) or "- (add key benefits)"
-    prompt = (
-        f"Generate {variants} distinct {length.lower()} {content_type.lower()} variants in {lang}.\n"
-        f"Company: {co.name} (Industry: {co.industry}, Size: {co.size}).\n"
-        f"Audience: {audience}. Tone: {tone}. Platform: {platform}.\n"
-        f"Topic: {topic}\n\nKey points:\n{bullet_lines}\n\n"
-        f"CTA: {cta}\n\nBrand rules (follow; avoid banned words):\n{brand_rules or '(none)'}\n\n"
-        f"Return only the copy. Separate variants clearly with '\n---\n'."
+cols = st.columns(3)
+with cols[0]:
+    content_type = st.selectbox(
+        "Content type",
+        ["Press Release", "Ad Copy", "Landing Page", "Blog Post"],
     )
-    raw = llm_copy(prompt, temperature=0.65, max_tokens=1100)
-    parts = [p.strip() for p in raw.split("\n---\n") if p.strip()]
-    if not parts:
-        parts = [raw.strip()]
+with cols[1]:
+    tone = st.selectbox("Tone", ["Professional", "Friendly", "Bold", "Playful"])
+with cols[2]:
+    length = st.selectbox("Length", ["Short", "Medium", "Long"], index=1)
 
-    joined = ("\n\n" + ("—"*40) + "\n\n").join(parts)
-    st.success("Draft(s) created")
-    for i, p in enumerate(parts, start=1):
-        st.markdown(f"#### Variant {i}")
-        st.markdown(p)
+if st.button("Generate A/B/C Variants", use_container_width=True):
+    company_name = co.get("name") if isinstance(co, dict) else getattr(co, "name", "")
+    industry = co.get("industry") if isinstance(co, dict) else getattr(co, "industry", "")
+    audience = co.get("audience") if isinstance(co, dict) else getattr(co, "audience", "")
+    topic = co.get("topic") if isinstance(co, dict) else getattr(co, "topic", "New Launch")
 
-    history.add(
-        kind="variants",
-        text=joined,
-        payload={
-            "content_type": content_type, "platform": platform, "topic": topic,
-            "tone": tone, "length": length, "audience": audience, "cta": cta,
-            "language": lang, "variants": int(variants), "company": state.get_company_as_dict()},
-        tags=["variants", content_type, tone, length, lang],
-        meta={"company": co.name}
-    )
+    prompt = f"""
+You are a senior PR/marketing copywriter.
+Create three distinct {content_type} variants for:
+- Company: {company_name} ({industry})
+- Audience: {audience}
+- Topic/Offer: {topic}
+Tone: {tone}. Length: {length}.
+Return only the copy for each variant, separated with a clear title line.
+    """.strip()
 
-    c1, c2 = st.columns(2)
+    with st.spinner("Generating variants..."):
+        try:
+            raw = llm_copy(prompt)
+        except Exception:
+            raw = ""
+
+    # Very light parser for 3 variants (fallback if model returns one block)
+    parts = [p.strip() for p in raw.split("\n\n") if p.strip()]
+    if len(parts) < 3:
+        variants = [raw.strip() or "Draft:\n• Opening line tailored to the audience.\n• Benefit/feature #1\n• Benefit/feature #2\n• Clear CTA"]
+    else:
+        # keep the top 3 chunks as variants
+        variants = parts[:3]
+
+    # Show and export
+    for i, v in enumerate(variants, 1):
+        st.subheader(f"Variant {i}")
+        st.write(v)
+
+    joined = join_variants(variants)
+
+    c1, c2, c3 = st.columns(3)
     with c1:
-        st.download_button("Download A/B/C (.docx)", data=text_to_docx_bytes(joined),
-                           file_name="variants.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+        st.download_button(
+            "Download A/B/C (.txt)",
+            data=joined.encode("utf-8"),
+            file_name="content_engine_variants.txt",
+            mime="text/plain",
+            use_container_width=True,
+        )
     with c2:
-        st.download_button("Download A/B/C (.pdf)", data=text_to_pdf_bytes(joined),
-                           file_name="variants.pdf", mime="application/pdf")
+        st.download_button(
+            "Download A/B/C (.docx)",
+            data=text_to_docx_bytes(joined, title="Content Engine — A/B/C"),
+            file_name="content_engine_variants.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            use_container_width=True,
+        )
+    with c3:
+        st.download_button(
+            "Download A/B/C (.pdf)",
+            data=text_to_pdf_bytes(joined, title="Content Engine — A/B/C"),
+            file_name="content_engine_variants.pdf",
+            mime="application/pdf",
+            use_container_width=True,
+        )
+
+    # Log to history
+    try:
+        history.add(
+            kind="content",
+            title=f"{content_type} — {tone}/{length}",
+            payload={"variants": variants, "joined": joined},
+            meta={"company": company_name, "type": content_type, "tone": tone, "length": length},
+            tags=["content", content_type.lower(), tone.lower(), length.lower()],
+        )
+    except Exception:
+        pass
